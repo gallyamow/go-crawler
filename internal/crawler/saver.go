@@ -32,21 +32,21 @@ func NewSaver(baseDir string) *Saver {
 func (s *Saver) SavePage(page *Page) (*SaveResult, error) {
 	filename, err := generateFilename(page.URL)
 	if err != nil {
-		return nil, fmt.Errorf("failed to parse url: %w", err)
+		return nil, fmt.Errorf("generate file name: %w", err)
 	}
 
 	savePath := filepath.Join(s.baseDir, filename)
 	if err := os.MkdirAll(filepath.Dir(savePath), 0755); err != nil {
-		return nil, fmt.Errorf("failed to create directories: %w", err)
+		return nil, fmt.Errorf("create directory: %w", err)
 	}
 
 	if err := os.WriteFile(savePath, page.Content, 0644); err != nil {
-		return nil, fmt.Errorf("failed to write file: %w", err)
+		return nil, fmt.Errorf("write file: %w", err)
 	}
 
 	fileInfo, err := os.Stat(savePath)
 	if err != nil {
-		return nil, fmt.Errorf("failed to read file stat: %w", err)
+		return nil, fmt.Errorf("read file stat: %w", err)
 	}
 
 	return &SaveResult{Path: savePath, Size: fileInfo.Size()}, nil
@@ -55,7 +55,7 @@ func (s *Saver) SavePage(page *Page) (*SaveResult, error) {
 func generateFilename(URL string) (string, error) {
 	u, err := url.Parse(URL)
 	if err != nil {
-		return "", fmt.Errorf("failed to parse url: %w", err)
+		return "", fmt.Errorf("parse url: %w", err)
 	}
 
 	segments := strings.Split(strings.Trim(u.Path, "/"), "/")

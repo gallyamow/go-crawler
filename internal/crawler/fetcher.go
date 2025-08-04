@@ -12,14 +12,19 @@ const (
 	defaultTimeout   = 30 * time.Second
 )
 
+type Page struct {
+	URL     string
+	Content []byte
+}
+
 type Fetcher struct {
 	client    *http.Client
 	userAgent string
 }
 
-type OptionFunc func(*Fetcher)
+type FetcherOptionFunc func(*Fetcher)
 
-func NewFetcher(options ...OptionFunc) *Fetcher {
+func NewFetcher(options ...FetcherOptionFunc) *Fetcher {
 	f := &Fetcher{
 		client:    &http.Client{Timeout: defaultTimeout},
 		userAgent: defaultUserAgent,
@@ -32,20 +37,25 @@ func NewFetcher(options ...OptionFunc) *Fetcher {
 	return f
 }
 
-func FetcherWithTimeout(timeout time.Duration) OptionFunc {
+func FetcherWithTimeout(timeout time.Duration) FetcherOptionFunc {
 	return func(f *Fetcher) {
 		f.client.Timeout = timeout
 	}
 }
 
-func FetcherWithUserAgent(ua string) OptionFunc {
+func FetcherWithUserAgent(ua string) FetcherOptionFunc {
 	return func(f *Fetcher) {
 		f.userAgent = ua
 	}
 }
 
-func (f *Fetcher) GetPage(url string) (*Page, error) {
-	content, err := f.GetURL(url)
+func (f *Fetcher) FetchPage(url string) (*Page, error) {
+	req, err := f.buildGetRequest(url)
+	if err != nil {
+		return nil, fmt.Errorf("build request: %w", err)
+	}
+
+	content, err := f.doRequest(req)
 	if err != nil {
 		return nil, err
 	}
@@ -56,21 +66,15 @@ func (f *Fetcher) GetPage(url string) (*Page, error) {
 	}, nil
 }
 
-func (f *Fetcher) GetURL(url string) ([]byte, error) {
-	req, err := f.buildGetRequest(url)
-	if err != nil {
-		return nil, fmt.Errorf("build request failed: %w", err)
-	}
-	fmt.Println(req)
-
+func (f *Fetcher) doRequest(req *http.Request) ([]byte, error) {
 	resp, err := f.client.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("request failed: %w", err)
+		return nil, fmt.Errorf("make http-request: %w", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("unexceprted status code %d", resp.StatusCode)
+		return nil, fmt.Errorf("unexpected status code %d", resp.StatusCode)
 	}
 
 	return io.ReadAll(resp.Body)
@@ -79,7 +83,7 @@ func (f *Fetcher) GetURL(url string) ([]byte, error) {
 func (f *Fetcher) buildGetRequest(url string) (*http.Request, error) {
 	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
-		return nil, fmt.Errorf("failed to init request: %w", err)
+		return nil, fmt.Errorf("init request: %w", err)
 	}
 	req.Header.Set("User-Agent", f.userAgent)
 
