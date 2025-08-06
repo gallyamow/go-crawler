@@ -4,12 +4,15 @@ import (
 	"go-crawler/internal/crawler"
 	"log/slog"
 	"os"
+	"sync"
+	"time"
 )
 
 func main() {
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
 
 	maxCount := 10
+	maxConcurrent := 1
 	startUrl := "https://go.dev/learn/"
 
 	fetcher := crawler.NewFetcher()
@@ -38,6 +41,9 @@ func main() {
 		return parsed, saved, nil
 	}
 
+	startedAt := time.Now()
+	sem := crawler.NewSemaphore(maxConcurrent)
+	wg := sync.WaitGroup{}
 	queue := []string{startUrl}
 	cnt := 0
 
@@ -45,23 +51,35 @@ func main() {
 		url := queue[0]
 		queue = queue[1:]
 
-		logger.Info("Handling url", "url", url)
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
 
-		parsed, saved, err := handler(url)
-		if err != nil {
-			logger.Error("Failed to handle", "err", err, "url", url)
-			continue
-		}
+			sem.Acquire()
+			defer sem.Release()
 
-		logger.Info("Successfully handled", "url", url, "parsed", parsed.String(), "saved", saved.String())
-		cnt += 1
+			parsed, saved, err := handler(url)
+			if err != nil {
+				logger.Error("Failed to handle", "err", err, "url", url)
+				return
+			}
+
+			logger.Info("Successfully handled", "url", url, "parsed", parsed.String(), "saved", saved.String())
+			cnt += 1
+
+			// TODO: обработать дубли
+			queue = append(queue, parsed.Links...)
+		}()
 
 		if cnt >= maxCount {
 			logger.Info("Limit exceed", "limit", maxCount)
 			break
 		}
 
-		// TODO: обработать дубли
-		queue = append(queue, parsed.Links...)
+		wg.Wait()
 	}
+
+	wg.Wait()
+
+	logger.Info("Elapsed time", "time", time.Since(startedAt).String())
 }
