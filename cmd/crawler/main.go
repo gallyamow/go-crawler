@@ -12,7 +12,7 @@ func main() {
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
 
 	maxCount := 10
-	//maxConcurrent := 5
+	maxConcurrent := 5
 	startUrl := "https://go.dev/learn/"
 
 	fetcher := crawler.NewFetcher()
@@ -48,11 +48,16 @@ func main() {
 	cnt := 0
 
 	wg := sync.WaitGroup{}
+	sem := crawler.NewSemaphore(maxConcurrent)
 
 	for len(queue) > 0 {
 		wg.Add(1)
 		go func(queuedURL string) {
+			sem.Acquire()
+
 			defer wg.Done()
+			defer sem.Release()
+
 			parsed, saved, err := handler(queuedURL)
 			if err != nil {
 				logger.Error("Failed to handle", "err", err, "url", queuedURL)
