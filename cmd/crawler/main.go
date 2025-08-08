@@ -5,7 +5,6 @@ import (
 	"go-crawler/internal/crawler"
 	"log/slog"
 	"os"
-	"sync"
 	"time"
 )
 
@@ -43,23 +42,15 @@ func main() {
 	}
 
 	startedAt := time.Now()
-	sem := crawler.NewSemaphore(maxConcurrent)
-	wg := sync.WaitGroup{}
+
+	queue := make(chan string, maxConcurrent)
 	visited := make(map[string]struct{})
-	queue := []string{startUrl}
 	cnt := 0
 
-	wg.Add(1) // ждем цикл
-	for len(queue) > 0 {
-		queuedURL := queue[0]
-		queue = queue[1:]
-
+	for qu := range queue {
+		fmt.Println("DDDDDDDDDDDDDDD" + qu)
 		go func(u string) {
 			fmt.Println("DDDDDDDDDDDDDDD" + u)
-			defer wg.Done()
-
-			sem.Acquire()
-			defer sem.Release()
 
 			parsed, saved, err := handler(u)
 			if err != nil {
@@ -70,24 +61,25 @@ func main() {
 			logger.Info("Successfully handled", "url", u, "parsed", parsed.String(), "saved", saved.String())
 			cnt += 1
 
+			if cnt >= maxCount {
+				logger.Info("Page limit exceed", "limit", maxCount)
+				return
+			}
+
 			for _, link := range parsed.Links {
 				if _, ok := visited[link]; ok {
 					continue
 				}
 
 				visited[link] = struct{}{}
-				queue = append(queue, link)
+				queue <- link
 			}
-		}(queuedURL)
-
-		if cnt >= maxCount {
-			logger.Info("Page limit exceed", "limit", maxCount)
-			break
-		}
-
-		// приходится ждать в цикле, без этого срабатывает только для одной записи
-		wg.Wait()
+		}(qu)
 	}
+
+	go func() {
+		queue <- startUrl
+	}()
 
 	logger.Info("Elapsed time", "time", time.Since(startedAt).String())
 }
