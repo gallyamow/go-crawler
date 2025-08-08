@@ -1,10 +1,10 @@
 package main
 
 import (
-	"fmt"
 	"go-crawler/internal/crawler"
 	"log/slog"
 	"os"
+	"sync"
 	"time"
 )
 
@@ -12,7 +12,7 @@ func main() {
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
 
 	maxCount := 10
-	maxConcurrent := 5
+	//maxConcurrent := 5
 	startUrl := "https://go.dev/learn/"
 
 	fetcher := crawler.NewFetcher()
@@ -20,8 +20,8 @@ func main() {
 	parser := crawler.NewParser()
 
 	var handler func(queuedUrl string) (*crawler.ParseResult, *crawler.SaveResult, error)
-	handler = func(queuedUrl string) (*crawler.ParseResult, *crawler.SaveResult, error) {
-		page, err := fetcher.FetchPage(queuedUrl)
+	handler = func(pageURL string) (*crawler.ParseResult, *crawler.SaveResult, error) {
+		page, err := fetcher.FetchPage(pageURL)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -43,22 +43,23 @@ func main() {
 
 	startedAt := time.Now()
 
-	queue := make(chan string, maxConcurrent)
+	queue := []string{startUrl}
 	visited := make(map[string]struct{})
 	cnt := 0
 
-	for qu := range queue {
-		fmt.Println("DDDDDDDDDDDDDDD" + qu)
-		go func(u string) {
-			fmt.Println("DDDDDDDDDDDDDDD" + u)
+	wg := sync.WaitGroup{}
 
-			parsed, saved, err := handler(u)
+	for len(queue) > 0 {
+		wg.Add(1)
+		go func(queuedURL string) {
+			defer wg.Done()
+			parsed, saved, err := handler(queuedURL)
 			if err != nil {
-				logger.Error("Failed to handle", "err", err, "url", u)
+				logger.Error("Failed to handle", "err", err, "url", queuedURL)
 				return
 			}
 
-			logger.Info("Successfully handled", "url", u, "parsed", parsed.String(), "saved", saved.String())
+			logger.Info("Successfully handled", "url", queuedURL, "parsed", parsed.String(), "saved", saved.String())
 			cnt += 1
 
 			if cnt >= maxCount {
@@ -72,14 +73,12 @@ func main() {
 				}
 
 				visited[link] = struct{}{}
-				queue <- link
+				queue = append(queue, link)
 			}
-		}(qu)
+		}(queue[0])
+		queue = queue[1:]
 	}
 
-	go func() {
-		queue <- startUrl
-	}()
-
+	wg.Wait()
 	logger.Info("Elapsed time", "time", time.Since(startedAt).String())
 }
