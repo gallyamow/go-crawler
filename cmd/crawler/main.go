@@ -75,7 +75,9 @@ func main() {
 		go worker(i, jobs, results, &wg)
 	}
 
+	done := make(chan struct{})
 	go func() {
+		defer close(done)
 		for parsed := range results {
 			logger.Info("Result received")
 
@@ -84,7 +86,6 @@ func main() {
 			if cnt >= maxCount {
 				logger.Info("Page limit exceed", "limit", maxCount)
 				close(jobs)
-				close(results)
 				return
 			}
 
@@ -94,7 +95,12 @@ func main() {
 				}
 
 				visited[link] = struct{}{}
-				jobs <- link
+				if cnt < maxCount {
+					select {
+					case jobs <- link:
+					default: // Skip if job queue is full
+					}
+				}
 			}
 		}
 	}()
@@ -103,8 +109,12 @@ func main() {
 	// TODO не ждем
 
 	// ждем завершения всех workers
-	//<-results
 	wg.Wait()
+	close(results)
+	<-done // Wait for coordinator
 
-	logger.Info("Elapsed time", "time", time.Since(startedAt).String())
+	logger.Info("Crawling completed",
+		"elapsed", time.Since(startedAt).String(),
+		"pages_crawled", cnt,
+	)
 }
