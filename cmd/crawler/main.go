@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"go-crawler/internal/crawler"
 	"log/slog"
 	"os"
@@ -15,13 +16,17 @@ func main() {
 	maxConcurrent := 5
 	startUrl := "https://go.dev/learn/"
 
+	startedAt := time.Now()
+
+	visited := make(map[string]struct{})
+	cnt := 0
+
 	fetcher := crawler.NewFetcher()
 	saver := crawler.NewSaver("./.tmp/")
 	parser := crawler.NewParser()
 
-	var handler func(queuedUrl string) (*crawler.ParseResult, *crawler.SaveResult, error)
-	handler = func(pageURL string) (*crawler.ParseResult, *crawler.SaveResult, error) {
-		page, err := fetcher.FetchPage(pageURL)
+	handleUrl := func(url string) (*crawler.ParseResult, *crawler.SaveResult, error) {
+		page, err := fetcher.FetchPage(url)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -41,34 +46,45 @@ func main() {
 		return parsed, saved, nil
 	}
 
-	startedAt := time.Now()
+	worker := func(i int, jobs <-chan string, results chan<- *crawler.ParseResult, wg *sync.WaitGroup) {
+		defer wg.Done()
 
-	queue := []string{startUrl}
-	visited := make(map[string]struct{})
-	cnt := 0
+		logger.Info(fmt.Sprintf("Worker %d started", i))
 
-	wg := sync.WaitGroup{}
-	sem := crawler.NewSemaphore(maxConcurrent)
+		for url := range jobs {
+			logger.Info(fmt.Sprintf("Worker %d is handling %s", i, url))
 
-	for len(queue) > 0 {
-		wg.Add(1)
-		go func(queuedURL string) {
-			sem.Acquire()
+			parsed, saved, err := handleUrl(url)
 
-			defer wg.Done()
-			defer sem.Release()
-
-			parsed, saved, err := handler(queuedURL)
 			if err != nil {
-				logger.Error("Failed to handle", "err", err, "url", queuedURL)
+				logger.Error("Failed to handle", "err", err, "url", url)
 				return
 			}
+			logger.Info("Successfully handled", "url", url, "parsed", parsed.String(), "saved", saved.String())
 
-			logger.Info("Successfully handled", "url", queuedURL, "parsed", parsed.String(), "saved", saved.String())
+			results <- parsed
+		}
+	}
+
+	jobs := make(chan string, maxConcurrent)
+	results := make(chan *crawler.ParseResult, maxConcurrent)
+	wg := sync.WaitGroup{}
+
+	for i := range maxConcurrent {
+		wg.Add(1)
+		go worker(i, jobs, results, &wg)
+	}
+
+	go func() {
+		for parsed := range results {
+			logger.Info("Result received")
+
 			cnt += 1
 
 			if cnt >= maxCount {
 				logger.Info("Page limit exceed", "limit", maxCount)
+				close(jobs)
+				close(results)
 				return
 			}
 
@@ -78,12 +94,17 @@ func main() {
 				}
 
 				visited[link] = struct{}{}
-				queue = append(queue, link)
+				jobs <- link
 			}
-		}(queue[0])
-		queue = queue[1:]
-	}
+		}
+	}()
 
+	jobs <- startUrl
+	// TODO не ждем
+
+	// ждем завершения всех workers
+	//<-results
 	wg.Wait()
+
 	logger.Info("Elapsed time", "time", time.Since(startedAt).String())
 }
