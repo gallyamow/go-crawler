@@ -5,15 +5,14 @@ import (
 	"go-crawler/internal/crawler"
 	"log/slog"
 	"os"
-	"sync"
 	"time"
 )
 
 func main() {
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
 
-	maxCount := 10
-	maxConcurrent := 5
+	maxCount := 100
+	maxConcurrent := 10
 	startUrl := "https://go.dev/learn/"
 
 	startedAt := time.Now()
@@ -46,9 +45,7 @@ func main() {
 		return parsed, saved, nil
 	}
 
-	worker := func(i int, jobs <-chan string, results chan<- *crawler.ParseResult, wg *sync.WaitGroup) {
-		defer wg.Done()
-
+	worker := func(i int, jobs <-chan string, results chan<- *crawler.ParseResult) {
 		logger.Info(fmt.Sprintf("Worker %d started", i))
 
 		for url := range jobs {
@@ -58,7 +55,7 @@ func main() {
 
 			if err != nil {
 				logger.Error("Failed to handle", "err", err, "url", url)
-				return
+				continue
 			}
 			logger.Info("Successfully handled", "url", url, "parsed", parsed.String(), "saved", saved.String())
 
@@ -68,24 +65,18 @@ func main() {
 
 	jobs := make(chan string, maxConcurrent)
 	results := make(chan *crawler.ParseResult, maxConcurrent)
-	wg := sync.WaitGroup{}
 
 	for i := range maxConcurrent {
-		wg.Add(1)
-		go worker(i, jobs, results, &wg)
+		go worker(i, jobs, results)
 	}
 
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
 		for parsed := range results {
-			logger.Info("Result received")
-
 			cnt += 1
-
 			if cnt >= maxCount {
 				logger.Info("Page limit exceed", "limit", maxCount)
-				close(jobs)
 				return
 			}
 
@@ -106,12 +97,10 @@ func main() {
 	}()
 
 	jobs <- startUrl
-	// TODO не ждем
 
-	// ждем завершения всех workers
-	wg.Wait()
+	<-done
+	close(jobs)
 	close(results)
-	<-done // Wait for coordinator
 
 	logger.Info("Crawling completed",
 		"elapsed", time.Since(startedAt).String(),
