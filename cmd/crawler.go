@@ -2,7 +2,7 @@ package main
 
 import (
 	"fmt"
-	"go-crawler/internal/crawler"
+	"github.com/gallyamow/go-crawler/internal/crawler"
 	"log/slog"
 	"os"
 	"time"
