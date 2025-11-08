@@ -3,81 +3,67 @@ package htmlparser
 import (
 	"bytes"
 	"fmt"
-	urllib "net/url"
-	"slices"
-
 	"golang.org/x/net/html"
+	"slices"
 )
 
-type ParseResult struct {
-	Links       []string
-	Stylesheets []string
-	Scripts     []string
-	Images      []string
+type ResourceNode struct {
+	Node *html.Node
+	Tag  string
+	Src  string
 }
 
-func Parse(rawPageURL string, pageContent []byte) (*ParseResult, error) {
-	pageURL, err := urllib.Parse(rawPageURL)
-	if err != nil {
-		return nil, fmt.Errorf("failed to parse url: %w", err)
-	}
-
+// ParseResources парсит html и возвращает данные как есть.
+func ParseResources(pageContent []byte) ([]*ResourceNode, error) {
 	rootNode, err := html.Parse(bytes.NewBuffer(pageContent))
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse html: %w", err)
 	}
 
-	return &ParseResult{
-		Links: collectUniqueAttrValues(rootNode, "a", "href", nil, func(v string) (string, bool) {
-			return normalizeURL(v, pageURL)
-		}),
-		Stylesheets: collectUniqueAttrValues(rootNode, "link", "href", func(node *html.Node) bool {
+	return collect(rootNode, []string{"a", "link", "script", "img"}, func(node *html.Node) (*ResourceNode, bool) {
+		tag := node.Data
+
+		var src string
+		var ok bool
+
+		switch tag {
+		case "script", "img":
+			src, ok = readAttrValue(node, "src")
+		case "link":
 			typeAttr, _ := readAttrValue(node, "type")
 			relAttr, _ := readAttrValue(node, "rel")
-
-			return typeAttr == "text/css" || relAttr == "stylesheet"
-		}, func(v string) (string, bool) {
-			return normalizeURL(v, pageURL)
-		}),
-		Scripts: collectUniqueAttrValues(rootNode, "script", "src", nil, func(v string) (string, bool) {
-			return normalizeURL(v, pageURL)
-		}),
-		Images: collectUniqueAttrValues(rootNode, "img", "src", nil, func(v string) (string, bool) {
-			return normalizeURL(v, pageURL)
-		}),
-	}, nil
-}
-
-func collectUniqueAttrValues(rootNode *html.Node, tag string, attr string, nodeFilter func(*html.Node) bool, valueTransformer func(string) (string, bool)) []string {
-	var vals []string
-
-	for _, v := range collectAttrValues(rootNode, tag, attr, nodeFilter) {
-		if t, ok := valueTransformer(v); ok {
-			vals = append(vals, t)
-		}
-	}
-
-	// unique
-	slices.Sort(vals)
-	vals = slices.Compact(vals)
-
-	return vals
-}
-
-func collectAttrValues(node *html.Node, tag string, attr string, filter func(*html.Node) bool) []string {
-	var res []string
-
-	if node.Type == html.ElementNode && node.Data == tag {
-		if filter == nil || filter(node) {
-			if val, ok := readAttrValue(node, attr); ok {
-				res = append(res, val)
+			if typeAttr == "text/css" || relAttr == "stylesheet" {
+				src, ok = readAttrValue(node, "href")
 			}
+		case "a":
+			src, ok = readAttrValue(node, "href")
+		}
+
+		if !ok {
+			return nil, false
+		}
+
+		return &ResourceNode{
+			Node: node,
+			Tag:  tag,
+			Src:  src,
+		}, true
+	}), nil
+}
+
+// collect обходит все узлы и собирает рекурсивно ResourceNode
+func collect(node *html.Node, tags []string, match func(*html.Node) (*ResourceNode, bool)) []*ResourceNode {
+	var res []*ResourceNode
+
+	if node.Type == html.ElementNode && slices.Contains(tags, node.Data) {
+		if val, ok := match(node); ok {
+			res = append(res, val)
 		}
 	}
 
 	// recursive walk
 	for nextNode := node.FirstChild; nextNode != nil; nextNode = nextNode.NextSibling {
-		res = append(res, collectAttrValues(nextNode, tag, attr, filter)...)
+		res = append(res, collect(nextNode, tags, match)...)
 	}
 
 	return res
@@ -91,36 +77,4 @@ func readAttrValue(node *html.Node, attrName string) (string, bool) {
 	}
 
 	return "", false
-}
-
-func normalizeURL(rawURL string, pageURL *urllib.URL) (string, bool) {
-	var url *urllib.URL
-	var ok bool
-
-	if url, ok = parseURL(rawURL); ok {
-		if url, ok = stripAnchor(url); ok {
-			return resolveAbsoluteURL(url, pageURL).String(), true
-		}
-	}
-
-	return "", false
-}
-
-func parseURL(rawURL string) (*urllib.URL, bool) {
-	url, err := urllib.Parse(rawURL)
-	if err != nil {
-		return nil, false
-	}
-	return url, true
-}
-
-func resolveAbsoluteURL(localUrl *urllib.URL, pageUrl *urllib.URL) *urllib.URL {
-	return pageUrl.ResolveReference(localUrl)
-}
-
-func stripAnchor(url *urllib.URL) (*urllib.URL, bool) {
-	// drop anchor
-	url.Fragment = ""
-
-	return url, true
 }

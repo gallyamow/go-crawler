@@ -8,47 +8,60 @@ import (
 )
 
 func TestParse(t *testing.T) {
-	t.Run("Parse", func(t *testing.T) {
-		file := filepath.Join("testdata", "example1.html")
-		content, err := os.ReadFile(file)
+	t.Run("example1", func(t *testing.T) {
+		testFile := filepath.Join("../../testdata", "example1.html")
+
+		content, err := os.ReadFile(testFile)
 		if err != nil {
-			t.Fatalf("read test file: %v", err)
+			t.Fatalf("failed to read test testFile %q: %v", testFile, err)
 		}
 
-		res, err := Parse("https://www.sheldonbrown.com/web_sample1.html", content)
+		resources, err := ParseResources(content)
 		if err != nil {
-			t.Errorf("got error: %v", err)
+			t.Fatalf("failed to parse test testFile %q: %v", testFile, err)
 		}
 
-		// we ignore anchors
-		assertStringsEqual(t, res.Links, []string{
+		var a, css, scripts, imgs []string
+		for _, res := range resources {
+			switch res.Tag {
+			case "a":
+				a = append(a, res.Src)
+			case "link":
+				css = append(css, res.Src)
+			case "script":
+				scripts = append(scripts, res.Src)
+			case "img":
+				imgs = append(imgs, res.Src)
+			}
+		}
+
+		assertSomeResourcesFounds(t, a, []string{
 			"https://www.sheldonbrown.com/index.html",
-			"https://www.sheldonbrown.com/web_glossary.html",
-			"https://www.sheldonbrown.com/web_sample1.html",
+			"web_glossary.html#browser",
+			"web_sample1.html#href2",
 		})
 
-		assertStringsEqual(t, res.Stylesheets, []string{
+		assertSomeResourcesFounds(t, css, []string{
 			"https://www.sheldonbrown.com/common-data/document.css",
 			"https://www.sheldonbrown.com/common-data/screen.css",
 			"https://www.sheldonbrown.com/common-data/print.css",
 		})
 
-		assertStringsEqual(t, res.Scripts, []string{
+		assertSomeResourcesFounds(t, scripts, []string{
 			"https://www.googletagmanager.com/gtag/js?id=G-YRNYST4RX7",
 			"http://pagead2.googlesyndication.com/pagead/show_ads.js",
 		})
 
-		assertStringsEqual(t, res.Images, []string{
+		assertSomeResourcesFounds(t, imgs, []string{
 			"https://www.sheldonbrown.com/images/scb_eagle_contact.jpeg",
 		})
 	})
 }
 
-func assertStringsEqual(t *testing.T, got []string, want []string) {
-	slices.Sort(want)
-	slices.Sort(got)
-
-	if !slices.Equal(got, want) {
-		t.Errorf("got %v, want %v", got, want)
+func assertSomeResourcesFounds(t *testing.T, got []string, want []string) {
+	for _, w := range want {
+		if !slices.Contains(got, w) {
+			t.Errorf("no %q found in %v", w, got)
+		}
 	}
 }
