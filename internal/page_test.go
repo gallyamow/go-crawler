@@ -1,7 +1,6 @@
 package internal
 
 import (
-	"github.com/gallyamow/go-crawler/pkg/htmlparser"
 	"os"
 	"path/filepath"
 	"testing"
@@ -28,88 +27,78 @@ func TestParse(t *testing.T) {
 			"https://www.sheldonbrown.com/web_glossary.html",
 			"https://www.sheldonbrown.com/web_sample1.html",
 		}
-		assertAllUrlFound(t, "a", page.URLMap, a)
+		assertAllUrlFound(t, "a", page.Links, a)
 
 		externalA := []string{
 			"https://www.external.com/1.html",
 			"https://www.google.com/",
 			"https://www.ya.ru/some_path",
 		}
-		assertAllUrlNotFound(t, "a", page.URLMap, externalA)
+		assertAllUrlNotFound(t, "a", page.Links, externalA)
 
 		css := []string{
 			"https://www.sheldonbrown.com/common-data/document.css",
 			"https://www.sheldonbrown.com/common-data/screen.css",
 			"https://www.sheldonbrown.com/common-data/print.css",
 		}
-		assertAllUrlFound(t, "link", page.URLMap, css)
+		assertAllUrlFound(t, "link", page.Assets, css)
 
 		externalCss := []string{
 			"https://www.external.com/1.css",
 		}
-		assertAllUrlFound(t, "link", page.URLMap, externalCss)
+		assertAllUrlFound(t, "link", page.Assets, externalCss)
 
 		scripts := []string{
 			"https://www.sheldonbrown.com/common-data/added.js?someAttr=true",
 			"https://www.sheldonbrown.com/common-data/added2.js",
 		}
-		assertAllUrlFound(t, "script", page.URLMap, scripts)
+		assertAllUrlFound(t, "script", page.Assets, scripts)
 
 		externalScripts := []string{
 			"https://www.googletagmanager.com/gtag/js?id=G-YRNYST4RX7",
 			"http://pagead2.googlesyndication.com/pagead/show_ads.js",
 			"https://www.external.com/1.js",
 		}
-		assertAllUrlFound(t, "script", page.URLMap, externalScripts)
+		assertAllUrlFound(t, "script", page.Assets, externalScripts)
 
 		imgs := []string{
 			"https://www.sheldonbrown.com/images/scb_eagle_contact.jpeg",
 		}
-		assertAllUrlFound(t, "img", page.URLMap, imgs)
+		assertAllUrlFound(t, "img", page.Assets, imgs)
 
 		externalImgs := []string{
 			"https://www.external.com/1.jpg",
 		}
-		assertAllUrlFound(t, "img", page.URLMap, externalImgs)
+		assertAllUrlFound(t, "img", page.Assets, externalImgs)
 	})
 }
 
-func assertAllUrlFound(t *testing.T, tag string, got map[string][]*htmlparser.ResourceNode, want []string) {
+func assertAllUrlFound(t *testing.T, tag string, got []*PageResource, want []string) {
 	for _, w := range want {
-		_, ok := got[w]
-		if !ok {
-			t.Errorf("url %q not found in %v", w, got)
-		}
-
 		found := false
-		for _, r := range got[w] {
-			if r.Tag == tag {
+		for _, r := range got {
+			if r.Resource.Data == tag && r.URL.String() == w {
 				found = true
 			}
 		}
 
 		if !found {
-			t.Errorf("tag %q not found in %v", tag, got[w])
+			t.Errorf("url %q not found in %v", w, got)
 		}
 	}
 }
 
-func assertAllUrlNotFound(t *testing.T, tag string, got map[string][]*htmlparser.ResourceNode, want []string) {
+func assertAllUrlNotFound(t *testing.T, tag string, got []*PageResource, want []string) {
 	for _, w := range want {
-		_, ok := got[w]
-		if ok {
-			t.Errorf("url %q found in %v", w, got)
-		}
-
 		found := false
-		for _, r := range got[w] {
-			if r.Tag == tag {
+		for _, r := range got {
+			if r.Resource.Data == tag && r.URL.String() == w {
 				found = true
 			}
 		}
 
 		if found {
-			t.Errorf("tag %q found in %v", tag, got[w])
+			t.Errorf("url %q found in %v", w, got)
 		}
 	}
 }

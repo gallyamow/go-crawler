@@ -27,7 +27,9 @@ func TestParse(t *testing.T) {
 
 		var a, css, scripts, imgs []string
 		for _, res := range resources {
-			switch res.Tag {
+			tag := res.Node.Data
+
+			switch tag {
 			case "a":
 				a = append(a, res.Src)
 			case "link":
