@@ -3,13 +3,16 @@ package internal
 import (
 	"fmt"
 	"github.com/gallyamow/go-crawler/pkg/htmlparser"
+	"golang.org/x/net/html"
 	urllib "net/url"
+	"path"
 )
 
 type Page struct {
-	URL     *urllib.URL
-	Content []byte
-	URLMap  map[string][]*htmlparser.ResourceNode
+	URL      *urllib.URL
+	RootNode *html.Node
+	Content  []byte
+	URLMap   map[string][]*htmlparser.ResourceNode
 }
 
 // Parse парсит контент страницы, нормализует ссылки и сохраняет их вместе с оригинальными значениями.
@@ -19,42 +22,57 @@ func Parse(rawURL string, content []byte) (*Page, error) {
 		return nil, fmt.Errorf("failed to parse url: %v", err)
 	}
 
-	resources, err := htmlparser.ParseResources(content)
+	rootNode, resources, err := htmlparser.ParseResources(content)
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse page content: %v", err)
 	}
 
-	urlMap := map[string][]*htmlparser.ResourceNode{}
-	for _, r := range resources {
-		bareSrc, ok := normalizedSrc(r.Src, pageURL)
-		if !ok {
-			continue
-		}
-
-		if _, ok := urlMap[bareSrc]; !ok {
-			urlMap[bareSrc] = []*htmlparser.ResourceNode{}
-		}
-
-		urlMap[bareSrc] = append(urlMap[bareSrc], r)
-	}
-
 	page := Page{
-		URL:     pageURL,
-		Content: content,
-		URLMap:  urlMap,
+		RootNode: rootNode,
+		URL:      pageURL,
+		Content:  content,
+		URLMap:   buildUrlMap(resources, pageURL),
 	}
 
 	return &page, nil
 }
 
-// normalizedSrc удаляем anchor, делаем абсолютным.
-func normalizedSrc(src string, pageURL *urllib.URL) (string, bool) {
-	srcURL, err := urllib.Parse(src)
-	if err != nil {
-		return "", false
+func buildUrlMap(resources []*htmlparser.ResourceNode, pageURL *urllib.URL) map[string][]*htmlparser.ResourceNode {
+	res := map[string][]*htmlparser.ResourceNode{}
+
+	for _, r := range resources {
+		srcURL, err := urllib.Parse(r.Src)
+		if err != nil {
+			continue
+		}
+
+		// skip resources from external domains
+		// нужно только для ссылок
+		if r.Tag == "a" && srcURL.Host != "" && srcURL.Host != pageURL.Host {
+			continue
+		}
+
+		// drop anchor
+		srcURL.Fragment = ""
+
+		// make absolute
+		srcURL = pageURL.ResolveReference(srcURL)
+		key := srcURL.String()
+
+		if _, ok := res[key]; !ok {
+			res[key] = []*htmlparser.ResourceNode{}
+		}
+
+		res[key] = append(res[key], r)
 	}
 
-	srcURL.Fragment = ""
+	return res
+}
 
-	return pageURL.ResolveReference(srcURL).String(), true
+func resolvePath(url *urllib.URL) (string, string) {
+	dir := path.Dir(url.Path)
+	name := path.Base(url.Path)
+	// обработать
+	//if name == "." || name == "/" {
+	return dir, name
 }

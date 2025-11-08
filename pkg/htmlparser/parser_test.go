@@ -16,9 +16,13 @@ func TestParse(t *testing.T) {
 			t.Fatalf("failed to read test testFile %q: %v", testFile, err)
 		}
 
-		resources, err := ParseResources(content)
+		rootNode, resources, err := ParseResources(content)
 		if err != nil {
 			t.Fatalf("failed to parse test testFile %q: %v", testFile, err)
+		}
+
+		if rootNode == nil {
+			t.Fatalf("failed to parse test testFile %q: root node is nil", testFile)
 		}
 
 		var a, css, scripts, imgs []string

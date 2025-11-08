@@ -14,13 +14,13 @@ type ResourceNode struct {
 }
 
 // ParseResources парсит html и возвращает данные как есть.
-func ParseResources(pageContent []byte) ([]*ResourceNode, error) {
+func ParseResources(pageContent []byte) (*html.Node, []*ResourceNode, error) {
 	rootNode, err := html.Parse(bytes.NewBuffer(pageContent))
 	if err != nil {
-		return nil, fmt.Errorf("failed to parse html: %w", err)
+		return nil, nil, fmt.Errorf("failed to parse html: %w", err)
 	}
 
-	return collect(rootNode, []string{"a", "link", "script", "img"}, func(node *html.Node) (*ResourceNode, bool) {
+	resources := collect(rootNode, []string{"a", "link", "script", "img"}, func(node *html.Node) (*ResourceNode, bool) {
 		tag := node.Data
 
 		var src string
@@ -48,7 +48,9 @@ func ParseResources(pageContent []byte) ([]*ResourceNode, error) {
 			Tag:  tag,
 			Src:  src,
 		}, true
-	}), nil
+	})
+
+	return rootNode, resources, nil
 }
 
 // collect обходит все узлы и собирает рекурсивно ResourceNode
