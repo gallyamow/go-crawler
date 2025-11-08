@@ -8,10 +8,12 @@ import (
 	"golang.org/x/net/html"
 	urllib "net/url"
 	"path"
+	"path/filepath"
 )
 
 type Page struct {
 	URL      *urllib.URL
+	Path     string
 	Content  []byte
 	RootNode *html.Node
 	Links    []*PageResource
@@ -31,14 +33,30 @@ func Parse(rawURL string, content []byte) (*Page, error) {
 		return nil, fmt.Errorf("failed to parse url: %v", err)
 	}
 
-	rootNode, parsed, err := htmlparser.ParseResources(content)
+	rootNode, parsedResources, err := htmlparser.ParseResources(content)
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse page content: %v", err)
 	}
 
+	links, assets := resolveAssets(pageURL, parsedResources)
+
+	page := &Page{
+		URL:      pageURL,
+		Content:  content,
+		RootNode: rootNode,
+		Links:    links,
+		Assets:   assets,
+	}
+	page.Path = resolvePagePath(page)
+
+	return page, nil
+}
+
+func resolveAssets(pageURL *urllib.URL, parsedResources []*htmlparser.ResourceNode) ([]*PageResource, []*PageResource) {
 	var links []*PageResource
 	var assets []*PageResource
-	for _, p := range parsed {
+
+	for _, p := range parsedResources {
 		srcURL, err := urllib.Parse(p.Src)
 		if err != nil {
 			continue
@@ -72,16 +90,19 @@ func Parse(rawURL string, content []byte) (*Page, error) {
 		}
 	}
 
-	page := Page{
-		URL:      pageURL,
-		Content:  content,
-		RootNode: rootNode,
-		Links:    links,
-		Assets:   assets,
-	}
-
-	return &page, nil
+	return links, assets
 }
+
+//// Transform
+//func (p *Page) Transform() {
+//	assetsMap := buildAssetsURLMapping(p.Assets)
+//
+//	for key, prs := range assetsMap {
+//		for _, p := range prs {
+//			p.URL
+//		}
+//	}
+//}
 
 //// Transform
 //func (p *Page) Transform() {
@@ -110,7 +131,19 @@ func buildAssetsURLMapping(prs []*PageResource) map[string][]*PageResource {
 	return res
 }
 
-func resolveFileAttrs(pr *PageResource) (string, string) {
+func resolvePagePath(pr *Page) string {
+	dir := path.Dir(pr.URL.Path)
+
+	name := path.Base(pr.URL.Path)
+	if name == "." || name == "/" {
+		// fallback name
+		name = "index"
+	}
+
+	return filepath.Join(dir, name) + ".html"
+}
+
+func resolveFilePath(pr *PageResource) string {
 	dir := path.Dir(pr.URL.Path)
 
 	var name string
@@ -121,11 +154,12 @@ func resolveFileAttrs(pr *PageResource) (string, string) {
 
 		// fallback name
 		if name == "." || name == "/" {
+			// расширение?
 			name = hasher(pr.URL.String())
 		}
 	}
 
-	return dir, name
+	return filepath.Join(dir, name)
 }
 
 func hasher(s string) string {
