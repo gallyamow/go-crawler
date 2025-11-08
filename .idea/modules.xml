@@ -3,7 +3,6 @@
   <component name="ProjectModuleManager">
     <modules>
       <module fileurl="file://$PROJECT_DIR$/go-crawler.iml" filepath="$PROJECT_DIR$/go-crawler.iml" />
-      <module fileurl="file://$PROJECT_DIR$/pkg.iml" filepath="$PROJECT_DIR$/pkg.iml" />
     </modules>
   </component>
 </project>
