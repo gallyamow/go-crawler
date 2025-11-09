@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 )
@@ -101,7 +102,6 @@ func handleResults(ctx context.Context, jobCh chan<- *internal.Page, resCh <-cha
 		}
 
 		// concurrently save?
-		// it is time to save? page is fully downloaded? anyway we need to transform some page nodes
 		err := saveItem(ctx, baseDir, page)
 		if err != nil {
 			logger.Error("Failed to save", "err", err, "page", page)
@@ -161,12 +161,13 @@ func pageWorker(ctx context.Context, i int, jobCh <-chan *internal.Page, resCh c
 			logger.Info(fmt.Sprintf("Asset saved %s", assetURL))
 		}
 
-		// transform nodes (TODO levels)
+		// rewrite scr nodes
+		pagePath := page.ResolveSavePath()
 		for _, asset := range page.Assets {
-			asset.HTMLResource.SetSrc("." + asset.ResolveSavePath())
+			asset.HTMLResource.SetSrc(makeRelativeURL(pagePath, asset.ResolveSavePath()))
 		}
 		for _, link := range page.Links {
-			link.HTMLResource.SetSrc("." + link.ResolveSavePath())
+			link.HTMLResource.SetSrc(makeRelativeURL(pagePath, link.ResolveSavePath()))
 		}
 
 		// replace content
@@ -225,4 +226,22 @@ func saveItem(ctx context.Context, baseDir string, item internal.CrawledItem) er
 	}
 
 	return nil
+}
+
+func makeRelativeURL(pagePath, assetPath string) string {
+	fromDir := filepath.Dir(pagePath)
+	rel, err := filepath.Rel(fromDir, assetPath)
+
+	// fallback
+	if err != nil {
+		return "./" + filepath.Base(assetPath)
+	}
+
+	// replace slashes
+	rel = strings.ReplaceAll(rel, string(filepath.Separator), "/")
+	if !strings.HasPrefix(rel, ".") {
+		rel = "./" + rel
+	}
+
+	return rel
 }
