@@ -12,6 +12,18 @@ type HTMLResource struct {
 	Src  string
 }
 
+func (rn *HTMLResource) SetSrc(newSrc string) bool {
+	switch rn.Tag() {
+	case "script", "img":
+		return setAttrValue(rn.Node, "newSrc", newSrc)
+	case "link":
+		return setAttrValue(rn.Node, "href", newSrc)
+	case "a":
+		return setAttrValue(rn.Node, "href", newSrc)
+	}
+	return false
+}
+
 func (rn *HTMLResource) Tag() string {
 	return rn.Node.Data
 }
@@ -81,4 +93,14 @@ func readAttrValue(node *html.Node, attrName string) (string, bool) {
 	}
 
 	return "", false
+}
+
+func setAttrValue(node *html.Node, attrName string, attrValue string) bool {
+	for i, attr := range node.Attr {
+		if attr.Key == attrName {
+			node.Attr[i].Val = attrValue
+			return true
+		}
+	}
+	return false
 }

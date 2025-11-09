@@ -1,10 +1,12 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"github.com/gallyamow/go-crawler/internal"
 	"github.com/gallyamow/go-crawler/pkg/httpclient"
+	"golang.org/x/net/html"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -32,24 +34,17 @@ func main() {
 		},
 	}
 
-	jobCh := make(chan internal.CrawledItem, maxConcurrent)
-	resCh := make(chan internal.CrawledItem, maxConcurrent)
-	defer close(jobCh)
-	defer close(resCh)
+	jobCh := make(chan *internal.Page, maxConcurrent)
+	resCh := make(chan *internal.Page, maxConcurrent)
+	done := make(chan interface{}, 1)
+	var visited sync.Map
 
 	for i := range maxConcurrent {
-		go downloadingWorker(ctx, i, jobCh, resCh, &httpClientPool, logger)
+		go pageWorker(ctx, i, jobCh, resCh, &visited, baseDir, &httpClientPool, logger)
 	}
 
-	var wg sync.WaitGroup
-	wg.Add(1)
-
 	var cnt = 0
-	go func() {
-		defer wg.Done()
-
-		cnt = resultsHandler(ctx, jobCh, resCh, baseDir, pagesLimit, logger)
-	}()
+	go handleResults(ctx, jobCh, resCh, done, &visited, &cnt, baseDir, pagesLimit, logger)
 
 	// starting
 	page, err := internal.NewPage(startUrl)
@@ -58,7 +53,11 @@ func main() {
 	}
 	jobCh <- page
 
-	wg.Wait()
+	// wait
+	<-done
+
+	close(jobCh)
+	close(resCh)
 
 	logger.Info("Crawling completed",
 		"elapsed", time.Since(startedAt).String(),
@@ -66,56 +65,57 @@ func main() {
 	)
 }
 
-func resultsHandler(ctx context.Context, jobCh chan<- internal.CrawledItem, resCh <-chan internal.CrawledItem, baseDir string, pagesLimit int, logger *slog.Logger) int {
-	visited := make(map[string]struct{})
-	cnt := 0
-
+// handleResults публикует остальные страницы
+func handleResults(ctx context.Context, jobCh chan<- *internal.Page, resCh <-chan *internal.Page, done chan interface{}, visited *sync.Map, cnt *int, baseDir string, pagesLimit int, logger *slog.Logger) {
+	defer close(done)
 	for {
-		item, ok := <-resCh
+		page, ok := <-resCh
 		if !ok {
 			break
 		}
 
-		rawURL := item.GetURL()
+		pageURL := page.GetURL()
 
-		cnt += 1
-		if cnt >= pagesLimit {
+		*cnt += 1
+		if *cnt >= pagesLimit {
 			logger.Info("Pages count limit exceed", "limit", pagesLimit)
-			return cnt
+			return
 		}
 
-		// queue assets and links downloading
-		for _, c := range item.Child() {
-			u := c.GetURL()
-			if _, seen := visited[u]; seen {
+		for _, link := range page.Links {
+			linkURL := link.URL.String()
+			if _, seen := visited.Load(linkURL); seen {
 				continue
+			}
+
+			newPage := &internal.Page{
+				URL: link.URL,
 			}
 
 			select {
 			case <-ctx.Done():
-				return cnt
-			case jobCh <- c:
-				visited[u] = struct{}{}
+				return
+			case jobCh <- newPage:
+				visited.Store(linkURL, struct{}{})
 			}
 		}
 
 		// concurrently save?
 		// it is time to save? page is fully downloaded? anyway we need to transform some page nodes
-		err := saveItem(ctx, baseDir, item)
+		err := saveItem(ctx, baseDir, page)
 		if err != nil {
-			logger.Error("Failed to save", "err", err, "item", item)
+			logger.Error("Failed to save", "err", err, "page", page)
 			continue
 		}
 
-		logger.Info(fmt.Sprintf("Saved %s", rawURL))
+		logger.Info(fmt.Sprintf("Saved %s", pageURL))
 	}
-
-	return cnt
 }
 
-func downloadingWorker(ctx context.Context, i int, jobCh <-chan internal.CrawledItem, resCh chan<- internal.CrawledItem, httpClientPool *sync.Pool, logger *slog.Logger) {
+// pageWorker загружает всю страницу целиком, все ее assets и сохраняет все.
+func pageWorker(ctx context.Context, i int, jobCh <-chan *internal.Page, resCh chan<- *internal.Page, visited *sync.Map, baseDir string, httpClientPool *sync.Pool, logger *slog.Logger) {
 	for {
-		item, ok := <-jobCh
+		page, ok := <-jobCh
 		if !ok {
 			return
 		}
@@ -124,21 +124,72 @@ func downloadingWorker(ctx context.Context, i int, jobCh <-chan internal.Crawled
 			return
 		}
 
-		rawURL := item.GetURL()
+		pageURL := page.GetURL()
 
-		// TODO: retry
-		err := downloadItem(ctx, item, httpClientPool)
+		err := downloadItem(ctx, page, httpClientPool)
 		if err != nil {
-			logger.Error(fmt.Sprintf("Failed to download %s, skip?", rawURL), "err", err)
+			logger.Error(fmt.Sprintf("Failed to download %s", pageURL), "err", err)
 			continue
 		}
 
-		logger.Info(fmt.Sprintf("Downloaded %s", rawURL))
+		logger.Info(fmt.Sprintf("Downloaded %s, %d bytes", pageURL, len(page.Content)))
+
+		// download assets
+		for _, asset := range page.Assets {
+			if ctx.Err() != nil {
+				break
+			}
+
+			assetURL := asset.URL.String()
+			if _, seen := visited.Load(assetURL); seen {
+				continue
+			}
+
+			err = downloadItem(ctx, asset, httpClientPool)
+			if err != nil {
+				logger.Error(fmt.Sprintf("Failed to download %s", assetURL), "err", err)
+				continue
+			}
+
+			err = saveItem(ctx, baseDir, asset)
+			if err != nil {
+				logger.Error(fmt.Sprintf("Failed to save %s", assetURL), "err", err)
+				continue
+			}
+
+			visited.Store(assetURL, struct{}{})
+			logger.Info(fmt.Sprintf("Asset saved %s", assetURL))
+		}
+
+		// transform nodes (TODO levels)
+		for _, asset := range page.Assets {
+			asset.HTMLResource.SetSrc("." + asset.ResolveSavePath())
+		}
+		for _, link := range page.Links {
+			link.HTMLResource.SetSrc("." + link.ResolveSavePath())
+		}
+
+		// replace content
+		var buf bytes.Buffer
+		err = html.Render(&buf, page.RootNode)
+		if err != nil {
+			logger.Error(fmt.Sprintf("Failed to transform %s", pageURL), "err", err)
+			continue
+		}
+		page.Content = buf.Bytes()
+
+		err = saveItem(ctx, baseDir, page)
+		if err != nil {
+			logger.Error(fmt.Sprintf("Failed to save %s", pageURL), "err", err)
+			continue
+		}
+
+		logger.Info(fmt.Sprintf("Page saved %s", pageURL))
 
 		select {
 		case <-ctx.Done():
 			return
-		case resCh <- item:
+		case resCh <- page:
 		}
 	}
 }
@@ -168,8 +219,6 @@ func saveItem(ctx context.Context, baseDir string, item internal.CrawledItem) er
 	if err := os.MkdirAll(filepath.Dir(savePath), 0755); err != nil {
 		return fmt.Errorf("create directory: %w", err)
 	}
-
-	// TODO: transform content
 
 	if err := os.WriteFile(savePath, item.GetContent(), 0644); err != nil {
 		return fmt.Errorf("write file: %w", err)

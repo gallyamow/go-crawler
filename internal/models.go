@@ -16,15 +16,15 @@ type CrawledItem interface {
 	ResolveSavePath() string
 	GetContent() []byte
 	SetContent(content []byte) error
-	Child() []CrawledItem
+	//Child() []CrawledItem
 }
 
 type Page struct {
-	URL     *urllib.URL
-	Node    *html.Node
-	Content []byte
-	Links   []*Resource
-	Assets  []*Resource
+	URL      *urllib.URL
+	RootNode *html.Node
+	Content  []byte
+	Links    []*Link
+	Assets   []*Resource
 }
 
 func NewPage(rawURL string) (*Page, error) {
@@ -43,15 +43,7 @@ func (p *Page) GetURL() string {
 }
 
 func (p *Page) ResolveSavePath() string {
-	dir := path.Dir(p.URL.Path)
-
-	name := path.Base(p.URL.Path)
-	if name == "." || name == "/" {
-		// fallback name
-		name = "index"
-	}
-
-	return filepath.Join(dir, name) + ".html"
+	return pagePath(p.URL)
 }
 
 func (p *Page) GetContent() []byte {
@@ -60,46 +52,51 @@ func (p *Page) GetContent() []byte {
 
 func (p *Page) SetContent(content []byte) error {
 	rootNode, parsedResources, err := htmlparser.ParseHTMLResources(content)
+
 	if err != nil {
 		return fmt.Errorf("failed to parse page content: %v", err)
 	}
 
-	links, assets := resolveAssets(p.URL, parsedResources)
+	links, assets := resolveLinksAndAssets(p.URL, parsedResources)
 
 	p.Content = content
-	p.Node = rootNode
+	p.RootNode = rootNode
 	p.Links = links
 	p.Assets = assets
 
 	return nil
 }
 
-func (p *Page) Child() []CrawledItem {
-	var res []CrawledItem
+//func (p *Page) Child() []CrawledItem {
+//	var res []CrawledItem
+//
+//	// @idiomatic: interface slice conversion
+//	// так нельзя, срезы разных типов — несовместимы, нужно преобразовать вручную
+//	// res = append(res, p.Links...)
+//	for _, link := range p.Links {
+//		res = append(res, link)
+//	}
+//
+//	for _, asset := range p.Assets {
+//		res = append(res, asset)
+//	}
+//
+//	return res
+//}
 
-	// @idiomatic: interface slice conversion
-	// так нельзя, срезы разных типов — несовместимы, нужно преобразовать вручную
-	// res = append(res, p.Links...)
-	for _, link := range p.Links {
-		res = append(res, link)
-	}
+type Link struct {
+	URL          *urllib.URL
+	HTMLResource *htmlparser.HTMLResource
+}
 
-	for _, asset := range p.Assets {
-		// skip external
-		if asset.External {
-			continue
-		}
-		res = append(res, asset)
-	}
-
-	return res
+func (l *Link) ResolveSavePath() string {
+	return pagePath(l.URL)
 }
 
 type Resource struct {
-	URL      *urllib.URL
-	Node     *html.Node
-	Content  []byte
-	External bool
+	URL          *urllib.URL
+	HTMLResource *htmlparser.HTMLResource
+	Content      []byte
 }
 
 func (r *Resource) GetURL() string {
@@ -110,16 +107,12 @@ func (r *Resource) ResolveSavePath() string {
 	dir := path.Dir(r.URL.Path)
 
 	var name string
-	if r.External {
-		name = "ext-" + hasher(r.URL.String())
-	} else {
-		name = path.Base(r.URL.Path)
+	name = path.Base(r.URL.Path)
 
-		// fallback name
-		if name == "." || name == "/" {
-			// расширение?
-			name = hasher(r.URL.String())
-		}
+	// fallback name
+	if name == "." || name == "/" {
+		// расширение?
+		name = hasher(r.URL.String())
 	}
 
 	return filepath.Join(dir, name)
@@ -134,11 +127,23 @@ func (r *Resource) SetContent(content []byte) error {
 	return nil
 }
 
-func (r *Resource) Child() []CrawledItem {
-	return []CrawledItem{}
-}
+//func (r *Resource) Child() []CrawledItem {
+//	return []CrawledItem{}
+//}
 
 func hasher(s string) string {
 	hash := md5.Sum([]byte(s))
 	return hex.EncodeToString(hash[:])
+}
+
+func pagePath(u *urllib.URL) string {
+	dir := path.Dir(u.Path)
+
+	name := path.Base(u.Path)
+	if name == "." || name == "/" {
+		// fallback name
+		name = "index"
+	}
+
+	return filepath.Join(dir, name) + ".html"
 }

@@ -1,11 +1,6 @@
 ## go-crawler
 
-A minimalistic web crawler implemented in Go:
-
-- Used **goroutines** for lightweight parallelism
-- Used **channels** for communication between workers
-- Used **sync primitives** (Mutex, WaitGroup) for coordination
-- Used **worker pools** for controlled concurrency
+A minimalistic web crawler, downloads web pages with assets and store them onm disk.
 
 ## TODO
 

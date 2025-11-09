@@ -1,42 +1,39 @@
 package internal
 
 import (
-	"fmt"
 	"github.com/gallyamow/go-crawler/pkg/htmlparser"
 	urllib "net/url"
 )
 
 // Parse парсит контент страницы, нормализует ссылки и сохраняет их вместе с оригинальными значениями.
-func Parse(pageURL *urllib.URL, content []byte) (*Page, error) {
-	rootNode, parsedResources, err := htmlparser.ParseHTMLResources(content)
-	if err != nil {
-		return nil, fmt.Errorf("failed to parse page content: %v", err)
-	}
+//func Parse(pageURL *urllib.URL, content []byte) (*Page, error) {
+//	rootNode, parsedResources, err := htmlparser.ParseHTMLResources(content)
+//	if err != nil {
+//		return nil, fmt.Errorf("failed to parse page content: %v", err)
+//	}
+//
+//	links, assets := resolveLinksAndAssets(pageURL, parsedResources)
+//
+//	page := &Page{
+//		URL:     pageURL,
+//		Content: content,
+//		RootNode:    rootNode,
+//		Links:   links,
+//		Assets:  assets,
+//	}
+//
+//	return page, nil
+//}
 
-	links, assets := resolveAssets(pageURL, parsedResources)
-
-	page := &Page{
-		URL:     pageURL,
-		Content: content,
-		Node:    rootNode,
-		Links:   links,
-		Assets:  assets,
-	}
-
-	return page, nil
-}
-
-func resolveAssets(pageURL *urllib.URL, parsedResources []*htmlparser.HTMLResource) ([]*Resource, []*Resource) {
-	var links []*Resource
+func resolveLinksAndAssets(pageURL *urllib.URL, htmlResources []*htmlparser.HTMLResource) ([]*Link, []*Resource) {
+	var links []*Link
 	var assets []*Resource
 
-	for _, p := range parsedResources {
-		srcURL, err := urllib.Parse(p.Src)
+	for _, hr := range htmlResources {
+		srcURL, err := urllib.Parse(hr.Src)
 		if err != nil {
 			continue
 		}
-
-		external := srcURL.Host == pageURL.Host
 
 		// drop anchor
 		srcURL.Fragment = ""
@@ -44,22 +41,25 @@ func resolveAssets(pageURL *urllib.URL, parsedResources []*htmlparser.HTMLResour
 		// make absolute
 		srcURL = pageURL.ResolveReference(srcURL)
 
-		if p.Tag() == "a" {
+		// проверять можно только после ResolveReference
+		if srcURL.Host != pageURL.Host {
+			continue
+		}
+
+		if hr.Tag() == "a" {
 			// skip resources from external domains
-			if p.Tag() == "a" && srcURL.Host != "" && srcURL.Host != pageURL.Host {
+			if hr.Tag() == "a" && srcURL.Host != "" && srcURL.Host != pageURL.Host {
 				continue
 			}
 
-			links = append(links, &Resource{
-				Node:     p.Node,
-				URL:      srcURL,
-				External: external,
+			links = append(links, &Link{
+				HTMLResource: hr,
+				URL:          srcURL,
 			})
 		} else {
 			assets = append(assets, &Resource{
-				Node:     p.Node,
-				URL:      srcURL,
-				External: external,
+				HTMLResource: hr,
+				URL:          srcURL,
 			})
 		}
 	}
