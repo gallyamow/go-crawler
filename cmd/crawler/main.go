@@ -31,38 +31,11 @@ func main() {
 		},
 	}
 
-	worker := func(i int, jobs <-chan string, results chan<- *internal.Page) {
-		logger.Info(fmt.Sprintf("Worker %d started", i))
-
-		for url := range jobs {
-			logger.Info(fmt.Sprintf("Worker %d is handling %s", i, url))
-
-			page, err := downloadPage(ctx, url, &httpClientPool)
-			if err != nil {
-				logger.Error("Failed to parse", "err", err, "url", url)
-				continue
-			}
-
-			// queue assets downloading
-			// transform page nodes
-
-			err = savePage(ctx, baseDir, page)
-			if err != nil {
-				logger.Error("Failed to save", "err", err, "url", url)
-				continue
-			}
-
-			logger.Info("handled", "url", url, "saved", "PATH")
-
-			results <- page
-		}
-	}
-
 	jobs := make(chan string, maxConcurrent)
 	results := make(chan *internal.Page, maxConcurrent)
 
 	for i := range maxConcurrent {
-		go worker(i, jobs, results)
+		go worker(ctx, i, baseDir, jobs, results, &httpClientPool, logger)
 	}
 
 	done := make(chan struct{})
@@ -109,6 +82,33 @@ func main() {
 		"elapsed", time.Since(startedAt).String(),
 		"pages_crawled", cnt,
 	)
+}
+
+func worker(ctx context.Context, i int, baseDir string, jobs <-chan string, results chan<- *internal.Page, httpClientPool *sync.Pool, logger *slog.Logger) {
+	logger.Info(fmt.Sprintf("Worker %d started", i))
+
+	for url := range jobs {
+		logger.Info(fmt.Sprintf("Worker %d is handling %s", i, url))
+
+		page, err := downloadPage(ctx, url, httpClientPool)
+		if err != nil {
+			logger.Error("Failed to parse", "err", err, "url", url)
+			continue
+		}
+
+		// queue assets downloading
+		// transform page nodes
+
+		err = savePage(ctx, baseDir, page)
+		if err != nil {
+			logger.Error("Failed to save", "err", err, "url", url)
+			continue
+		}
+
+		logger.Info("handled", "url", url, "saved", "PATH")
+
+		results <- page
+	}
 }
 
 func downloadPage(ctx context.Context, pageURL string, httpClientPool *sync.Pool) (*internal.Page, error) {
