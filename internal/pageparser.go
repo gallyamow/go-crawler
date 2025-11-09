@@ -7,13 +7,8 @@ import (
 )
 
 // Parse парсит контент страницы, нормализует ссылки и сохраняет их вместе с оригинальными значениями.
-func Parse(rawURL string, content []byte) (*Page, error) {
-	pageURL, err := urllib.Parse(rawURL)
-	if err != nil {
-		return nil, fmt.Errorf("failed to parse url: %v", err)
-	}
-
-	rootNode, parsedResources, err := htmlparser.ParseResources(content)
+func Parse(pageURL *urllib.URL, content []byte) (*Page, error) {
+	rootNode, parsedResources, err := htmlparser.ParseHTMLResources(content)
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse page content: %v", err)
 	}
@@ -21,19 +16,19 @@ func Parse(rawURL string, content []byte) (*Page, error) {
 	links, assets := resolveAssets(pageURL, parsedResources)
 
 	page := &Page{
-		URL:      pageURL,
-		Content:  content,
-		RootNode: rootNode,
-		Links:    links,
-		Assets:   assets,
+		URL:     pageURL,
+		Content: content,
+		Node:    rootNode,
+		Links:   links,
+		Assets:  assets,
 	}
 
 	return page, nil
 }
 
-func resolveAssets(pageURL *urllib.URL, parsedResources []*htmlparser.ResourceNode) ([]*PageResource, []*PageResource) {
-	var links []*PageResource
-	var assets []*PageResource
+func resolveAssets(pageURL *urllib.URL, parsedResources []*htmlparser.HTMLResource) ([]*Resource, []*Resource) {
+	var links []*Resource
+	var assets []*Resource
 
 	for _, p := range parsedResources {
 		srcURL, err := urllib.Parse(p.Src)
@@ -55,14 +50,14 @@ func resolveAssets(pageURL *urllib.URL, parsedResources []*htmlparser.ResourceNo
 				continue
 			}
 
-			links = append(links, &PageResource{
-				Resource: p.Node,
+			links = append(links, &Resource{
+				Node:     p.Node,
 				URL:      srcURL,
 				External: external,
 			})
 		} else {
-			assets = append(assets, &PageResource{
-				Resource: p.Node,
+			assets = append(assets, &Resource{
+				Node:     p.Node,
 				URL:      srcURL,
 				External: external,
 			})
@@ -83,14 +78,14 @@ func resolveAssets(pageURL *urllib.URL, parsedResources []*htmlparser.ResourceNo
 //	}
 //}
 
-func buildAssetsURLMapping(prs []*PageResource) map[string][]*PageResource {
-	res := map[string][]*PageResource{}
+func buildAssetsURLMapping(prs []*Resource) map[string][]*Resource {
+	res := map[string][]*Resource{}
 
 	for _, p := range prs {
 		key := p.URL.String()
 
 		if _, ok := res[key]; !ok {
-			res[key] = []*PageResource{}
+			res[key] = []*Resource{}
 		}
 
 		res[key] = append(res[key], p)

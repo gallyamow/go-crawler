@@ -6,7 +6,6 @@ import (
 	"github.com/gallyamow/go-crawler/internal"
 	"github.com/gallyamow/go-crawler/pkg/httpclient"
 	"log/slog"
-	urllib "net/url"
 	"os"
 	"path/filepath"
 	"sync"
@@ -14,17 +13,18 @@ import (
 )
 
 func main() {
-	ctx := context.Background()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
 
-	maxCount := 100
+	pagesLimit := 100
 	maxConcurrent := 10
+
 	startUrl := "https://go.dev/learn/"
 	baseDir := "./.tmp"
-	startedAt := time.Now()
 
-	visited := make(map[string]struct{})
-	cnt := 0
+	startedAt := time.Now()
 
 	var httpClientPool = sync.Pool{
 		New: func() any {
@@ -32,52 +32,33 @@ func main() {
 		},
 	}
 
-	jobs := make(chan string, maxConcurrent)
-	results := make(chan *internal.Page, maxConcurrent)
+	jobCh := make(chan internal.CrawledItem, maxConcurrent)
+	resCh := make(chan internal.CrawledItem, maxConcurrent)
+	defer close(jobCh)
+	defer close(resCh)
 
 	for i := range maxConcurrent {
-		go worker(ctx, i, baseDir, jobs, results, &httpClientPool, logger)
+		go downloadingWorker(ctx, i, jobCh, resCh, &httpClientPool, logger)
 	}
 
-	done := make(chan struct{})
+	var wg sync.WaitGroup
+	wg.Add(1)
+
+	var cnt = 0
 	go func() {
-		defer close(done)
+		defer wg.Done()
 
-		for page := range results {
-			cnt += 1
-			if cnt >= maxCount {
-				logger.Info("Page limit exceed", "limit", maxCount)
-				return
-			}
-
-			for _, link := range page.Links {
-				if link.External {
-					continue
-				}
-
-				url := link.URL.String()
-
-				if _, ok := visited[url]; ok {
-					continue
-				}
-
-				visited[url] = struct{}{}
-
-				if cnt < maxCount {
-					select {
-					case jobs <- url:
-					default: // Skip if job queue is full
-					}
-				}
-			}
-		}
+		cnt = resultsHandler(ctx, jobCh, resCh, baseDir, pagesLimit, logger)
 	}()
 
-	jobs <- startUrl
+	// starting
+	page, err := internal.NewPage(startUrl)
+	if err != nil {
+		logger.Error("Failed to parse starting URL", "err", err, "startUrl", startUrl)
+	}
+	jobCh <- page
 
-	<-done
-	close(jobs)
-	close(results)
+	wg.Wait()
 
 	logger.Info("Crawling completed",
 		"elapsed", time.Since(startedAt).String(),
@@ -85,45 +66,89 @@ func main() {
 	)
 }
 
-func worker(ctx context.Context, i int, baseDir string, jobs <-chan string, results chan<- *internal.Page, httpClientPool *sync.Pool, logger *slog.Logger) {
-	logger.Info(fmt.Sprintf("Worker %d started", i))
+func resultsHandler(ctx context.Context, jobCh chan<- internal.CrawledItem, resCh <-chan internal.CrawledItem, baseDir string, pagesLimit int, logger *slog.Logger) int {
+	visited := make(map[string]struct{})
+	cnt := 0
 
-	for url := range jobs {
-		logger.Info(fmt.Sprintf("Worker %d is handling %s", i, url))
+	for {
+		item, ok := <-resCh
+		if !ok {
+			break
+		}
 
-		pageURL, err := urllib.Parse(url)
+		rawURL := item.GetURL()
+
+		cnt += 1
+		if cnt >= pagesLimit {
+			logger.Info("Pages count limit exceed", "limit", pagesLimit)
+			return cnt
+		}
+
+		// queue assets and links downloading
+		for _, c := range item.Child() {
+			u := c.GetURL()
+			if _, seen := visited[u]; seen {
+				continue
+			}
+
+			select {
+			case <-ctx.Done():
+				return cnt
+			case jobCh <- c:
+				visited[u] = struct{}{}
+			}
+		}
+
+		// concurrently save?
+		// it is time to save? page is fully downloaded? anyway we need to transform some page nodes
+		err := saveItem(ctx, baseDir, item)
 		if err != nil {
-			logger.Error("Failed to parse url", "err", err, "url", url)
+			logger.Error("Failed to save", "err", err, "item", item)
 			continue
 		}
 
-		page := &internal.Page{URL: pageURL}
+		logger.Info(fmt.Sprintf("Saved %s", rawURL))
+	}
 
-		err = downloadItem(ctx, page, httpClientPool)
+	return cnt
+}
+
+func downloadingWorker(ctx context.Context, i int, jobCh <-chan internal.CrawledItem, resCh chan<- internal.CrawledItem, httpClientPool *sync.Pool, logger *slog.Logger) {
+	for {
+		item, ok := <-jobCh
+		if !ok {
+			return
+		}
+
+		if ctx.Err() != nil {
+			return
+		}
+
+		rawURL := item.GetURL()
+
+		// TODO: retry
+		err := downloadItem(ctx, item, httpClientPool)
 		if err != nil {
-			logger.Error("Failed to download", "err", err, "url", url)
+			logger.Error(fmt.Sprintf("Failed to download %s, skip?", rawURL), "err", err)
 			continue
 		}
 
-		// queue assets downloading
-		// transform page nodes
+		logger.Info(fmt.Sprintf("Downloaded %s", rawURL))
 
-		err = saveItem(ctx, baseDir, page)
-		if err != nil {
-			logger.Error("Failed to save", "err", err, "url", url)
-			continue
+		select {
+		case <-ctx.Done():
+			return
+		case resCh <- item:
 		}
-
-		logger.Info("handled", "url", url, "saved", "PATH")
-
-		results <- page
 	}
 }
 
-func downloadItem(ctx context.Context, item internal.Downloadable, httpClientPool *sync.Pool) error {
+func downloadItem(ctx context.Context, item internal.CrawledItem, httpClientPool *sync.Pool) error {
 	httpClient := httpClientPool.Get().(*httpclient.Client)
 	defer httpClientPool.Put(httpClient)
 
+	// buffered?
+	// check max size limit and extension
 	content, err := httpClient.Get(ctx, item.GetURL())
 	if err != nil {
 		return err
@@ -137,8 +162,8 @@ func downloadItem(ctx context.Context, item internal.Downloadable, httpClientPoo
 	return nil
 }
 
-func saveItem(ctx context.Context, baseDir string, item internal.Savable) error {
-	savePath := filepath.Join(baseDir, item.ResolveFilePath())
+func saveItem(ctx context.Context, baseDir string, item internal.CrawledItem) error {
+	savePath := filepath.Join(baseDir, item.ResolveSavePath())
 
 	if err := os.MkdirAll(filepath.Dir(savePath), 0755); err != nil {
 		return fmt.Errorf("create directory: %w", err)

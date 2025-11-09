@@ -11,25 +11,38 @@ import (
 	"path/filepath"
 )
 
-type Savable interface {
-	ResolveFilePath() string
-	GetContent() []byte
-}
-
-type Downloadable interface {
+type CrawledItem interface {
 	GetURL() string
+	ResolveSavePath() string
+	GetContent() []byte
 	SetContent(content []byte) error
+	Child() []CrawledItem
 }
 
 type Page struct {
-	URL      *urllib.URL
-	Content  []byte
-	RootNode *html.Node
-	Links    []*PageResource
-	Assets   []*PageResource
+	URL     *urllib.URL
+	Node    *html.Node
+	Content []byte
+	Links   []*Resource
+	Assets  []*Resource
 }
 
-func (p *Page) ResolveFilePath() string {
+func NewPage(rawURL string) (*Page, error) {
+	url, err := urllib.Parse(rawURL)
+
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse url %q: %v", rawURL, err)
+	}
+	return &Page{
+		URL: url,
+	}, nil
+}
+
+func (p *Page) GetURL() string {
+	return p.URL.String()
+}
+
+func (p *Page) ResolveSavePath() string {
 	dir := path.Dir(p.URL.Path)
 
 	name := path.Base(p.URL.Path)
@@ -45,12 +58,8 @@ func (p *Page) GetContent() []byte {
 	return p.Content
 }
 
-func (p *Page) GetURL() string {
-	return p.URL.String()
-}
-
 func (p *Page) SetContent(content []byte) error {
-	rootNode, parsedResources, err := htmlparser.ParseResources(content)
+	rootNode, parsedResources, err := htmlparser.ParseHTMLResources(content)
 	if err != nil {
 		return fmt.Errorf("failed to parse page content: %v", err)
 	}
@@ -58,20 +67,46 @@ func (p *Page) SetContent(content []byte) error {
 	links, assets := resolveAssets(p.URL, parsedResources)
 
 	p.Content = content
-	p.RootNode = rootNode
+	p.Node = rootNode
 	p.Links = links
 	p.Assets = assets
 
 	return nil
 }
 
-type PageResource struct {
-	Resource *html.Node
+func (p *Page) Child() []CrawledItem {
+	var res []CrawledItem
+
+	// @idiomatic: interface slice conversion
+	// так нельзя, срезы разных типов — несовместимы, нужно преобразовать вручную
+	// res = append(res, p.Links...)
+	for _, link := range p.Links {
+		res = append(res, link)
+	}
+
+	for _, asset := range p.Assets {
+		// skip external
+		if asset.External {
+			continue
+		}
+		res = append(res, asset)
+	}
+
+	return res
+}
+
+type Resource struct {
 	URL      *urllib.URL
+	Node     *html.Node
+	Content  []byte
 	External bool
 }
 
-func (r *PageResource) ResolveFilePath() string {
+func (r *Resource) GetURL() string {
+	return r.URL.String()
+}
+
+func (r *Resource) ResolveSavePath() string {
 	dir := path.Dir(r.URL.Path)
 
 	var name string
@@ -90,8 +125,17 @@ func (r *PageResource) ResolveFilePath() string {
 	return filepath.Join(dir, name)
 }
 
-func (r *PageResource) GetContent() []byte {
-	return []byte{}
+func (r *Resource) GetContent() []byte {
+	return r.Content
+}
+
+func (r *Resource) SetContent(content []byte) error {
+	r.Content = content
+	return nil
+}
+
+func (r *Resource) Child() []CrawledItem {
+	return []CrawledItem{}
 }
 
 func hasher(s string) string {

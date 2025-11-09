@@ -7,23 +7,23 @@ import (
 	"slices"
 )
 
-type ResourceNode struct {
+type HTMLResource struct {
 	Node *html.Node
 	Src  string
 }
 
-func (rn *ResourceNode) Tag() string {
+func (rn *HTMLResource) Tag() string {
 	return rn.Node.Data
 }
 
-// ParseResources парсит html и возвращает данные как есть.
-func ParseResources(pageContent []byte) (*html.Node, []*ResourceNode, error) {
+// ParseHTMLResources парсит html и возвращает данные как есть.
+func ParseHTMLResources(pageContent []byte) (*html.Node, []*HTMLResource, error) {
 	rootNode, err := html.Parse(bytes.NewBuffer(pageContent))
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to parse html: %w", err)
 	}
 
-	resources := collect(rootNode, []string{"a", "link", "script", "img"}, func(node *html.Node) (*ResourceNode, bool) {
+	resources := collect(rootNode, []string{"a", "link", "script", "img"}, func(node *html.Node) (*HTMLResource, bool) {
 		tag := node.Data
 
 		var src string
@@ -46,7 +46,7 @@ func ParseResources(pageContent []byte) (*html.Node, []*ResourceNode, error) {
 			return nil, false
 		}
 
-		return &ResourceNode{
+		return &HTMLResource{
 			Node: node,
 			Src:  src,
 		}, true
@@ -55,9 +55,9 @@ func ParseResources(pageContent []byte) (*html.Node, []*ResourceNode, error) {
 	return rootNode, resources, nil
 }
 
-// collect обходит все узлы и собирает рекурсивно ResourceNode
-func collect(node *html.Node, tags []string, match func(*html.Node) (*ResourceNode, bool)) []*ResourceNode {
-	var res []*ResourceNode
+// collect обходит все узлы и собирает рекурсивно HTMLResource
+func collect(node *html.Node, tags []string, match func(*html.Node) (*HTMLResource, bool)) []*HTMLResource {
+	var res []*HTMLResource
 
 	if node.Type == html.ElementNode && slices.Contains(tags, node.Data) {
 		if val, ok := match(node); ok {

@@ -73,11 +73,11 @@ func TestParse(t *testing.T) {
 	})
 }
 
-func assertAllUrlFound(t *testing.T, tag string, got []*PageResource, want []string) {
+func assertAllUrlFound(t *testing.T, tag string, got []*Resource, want []string) {
 	for _, w := range want {
 		found := false
 		for _, r := range got {
-			if r.Resource.Data == tag && r.URL.String() == w {
+			if r.Node.Data == tag && r.URL.String() == w {
 				found = true
 			}
 		}
@@ -88,11 +88,11 @@ func assertAllUrlFound(t *testing.T, tag string, got []*PageResource, want []str
 	}
 }
 
-func assertAllUrlNotFound(t *testing.T, tag string, got []*PageResource, want []string) {
+func assertAllUrlNotFound(t *testing.T, tag string, got []*Resource, want []string) {
 	for _, w := range want {
 		found := false
 		for _, r := range got {
-			if r.Resource.Data == tag && r.URL.String() == w {
+			if r.Node.Data == tag && r.URL.String() == w {
 				found = true
 			}
 		}
