@@ -6,6 +6,7 @@ import (
 	"github.com/gallyamow/go-crawler/internal"
 	"github.com/gallyamow/go-crawler/pkg/httpclient"
 	"log/slog"
+	urllib "net/url"
 	"os"
 	"path/filepath"
 	"sync"
@@ -90,16 +91,24 @@ func worker(ctx context.Context, i int, baseDir string, jobs <-chan string, resu
 	for url := range jobs {
 		logger.Info(fmt.Sprintf("Worker %d is handling %s", i, url))
 
-		page, err := downloadPage(ctx, url, httpClientPool)
+		pageURL, err := urllib.Parse(url)
 		if err != nil {
-			logger.Error("Failed to parse", "err", err, "url", url)
+			logger.Error("Failed to parse url", "err", err, "url", url)
+			continue
+		}
+
+		page := &internal.Page{URL: pageURL}
+
+		err = downloadItem(ctx, page, httpClientPool)
+		if err != nil {
+			logger.Error("Failed to download", "err", err, "url", url)
 			continue
 		}
 
 		// queue assets downloading
 		// transform page nodes
 
-		err = savePage(ctx, baseDir, page)
+		err = saveItem(ctx, baseDir, page)
 		if err != nil {
 			logger.Error("Failed to save", "err", err, "url", url)
 			continue
@@ -111,25 +120,25 @@ func worker(ctx context.Context, i int, baseDir string, jobs <-chan string, resu
 	}
 }
 
-func downloadPage(ctx context.Context, pageURL string, httpClientPool *sync.Pool) (*internal.Page, error) {
+func downloadItem(ctx context.Context, item internal.Downloadable, httpClientPool *sync.Pool) error {
 	httpClient := httpClientPool.Get().(*httpclient.Client)
 	defer httpClientPool.Put(httpClient)
 
-	content, err := httpClient.Get(ctx, pageURL)
+	content, err := httpClient.Get(ctx, item.GetURL())
 	if err != nil {
-		return nil, err
+		return err
 	}
 
-	page, err := internal.Parse(pageURL, content)
+	err = item.SetContent(content)
 	if err != nil {
-		return nil, err
+		return err
 	}
 
-	return page, nil
+	return nil
 }
 
-func savePage(ctx context.Context, baseDir string, page *internal.Page) error {
-	savePath := filepath.Join(baseDir, page.Path)
+func saveItem(ctx context.Context, baseDir string, item internal.Savable) error {
+	savePath := filepath.Join(baseDir, item.ResolveFilePath())
 
 	if err := os.MkdirAll(filepath.Dir(savePath), 0755); err != nil {
 		return fmt.Errorf("create directory: %w", err)
@@ -137,7 +146,7 @@ func savePage(ctx context.Context, baseDir string, page *internal.Page) error {
 
 	// TODO: transform content
 
-	if err := os.WriteFile(savePath, page.Content, 0644); err != nil {
+	if err := os.WriteFile(savePath, item.GetContent(), 0644); err != nil {
 		return fmt.Errorf("write file: %w", err)
 	}
 

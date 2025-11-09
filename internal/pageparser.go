@@ -1,30 +1,10 @@
 package internal
 
 import (
-	"crypto/md5"
-	"encoding/hex"
 	"fmt"
 	"github.com/gallyamow/go-crawler/pkg/htmlparser"
-	"golang.org/x/net/html"
 	urllib "net/url"
-	"path"
-	"path/filepath"
 )
-
-type Page struct {
-	URL      *urllib.URL
-	Path     string
-	Content  []byte
-	RootNode *html.Node
-	Links    []*PageResource
-	Assets   []*PageResource
-}
-
-type PageResource struct {
-	Resource *html.Node
-	URL      *urllib.URL
-	External bool
-}
 
 // Parse парсит контент страницы, нормализует ссылки и сохраняет их вместе с оригинальными значениями.
 func Parse(rawURL string, content []byte) (*Page, error) {
@@ -47,7 +27,6 @@ func Parse(rawURL string, content []byte) (*Page, error) {
 		Links:    links,
 		Assets:   assets,
 	}
-	page.Path = resolvePagePath(page)
 
 	return page, nil
 }
@@ -104,17 +83,6 @@ func resolveAssets(pageURL *urllib.URL, parsedResources []*htmlparser.ResourceNo
 //	}
 //}
 
-//// Transform
-//func (p *Page) Transform() {
-//	assetsMap := buildAssetsURLMapping(p.Assets)
-//
-//	for key, prs := range assetsMap {
-//		for _, p := range prs {
-//			p.URL
-//		}
-//	}
-//}
-
 func buildAssetsURLMapping(prs []*PageResource) map[string][]*PageResource {
 	res := map[string][]*PageResource{}
 
@@ -129,40 +97,4 @@ func buildAssetsURLMapping(prs []*PageResource) map[string][]*PageResource {
 	}
 
 	return res
-}
-
-func resolvePagePath(pr *Page) string {
-	dir := path.Dir(pr.URL.Path)
-
-	name := path.Base(pr.URL.Path)
-	if name == "." || name == "/" {
-		// fallback name
-		name = "index"
-	}
-
-	return filepath.Join(dir, name) + ".html"
-}
-
-func resolveFilePath(pr *PageResource) string {
-	dir := path.Dir(pr.URL.Path)
-
-	var name string
-	if pr.External {
-		name = "ext-" + hasher(pr.URL.String())
-	} else {
-		name = path.Base(pr.URL.Path)
-
-		// fallback name
-		if name == "." || name == "/" {
-			// расширение?
-			name = hasher(pr.URL.String())
-		}
-	}
-
-	return filepath.Join(dir, name)
-}
-
-func hasher(s string) string {
-	hash := md5.Sum([]byte(s))
-	return hex.EncodeToString(hash[:])
 }
