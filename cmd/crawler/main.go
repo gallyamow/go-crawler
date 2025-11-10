@@ -9,23 +9,36 @@ import (
 	"golang.org/x/net/html"
 	"log/slog"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 )
 
 func main() {
+	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
+		Level: slog.LevelInfo,
+	}))
+
+	config, err := internal.LoadConfig()
+	if err != nil {
+		logger.Error("Failed to load configuration", "err", err)
+		os.Exit(1)
+	}
+
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
-
-	pagesLimit := 100
-	maxConcurrent := 10
-
-	startUrl := "https://go.dev/learn/"
-	baseDir := "./.tmp"
+	// graceful shutdown
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
+	go func() {
+		<-sigChan
+		logger.Info("Received shutdown signal, stopping crawler...")
+		cancel()
+	}()
 
 	startedAt := time.Now()
 
@@ -35,22 +48,22 @@ func main() {
 		},
 	}
 
-	jobCh := make(chan *internal.Page, maxConcurrent)
-	resCh := make(chan *internal.Page, maxConcurrent)
+	jobCh := make(chan *internal.Page, config.MaxConcurrent)
+	resCh := make(chan *internal.Page, config.MaxConcurrent)
 	done := make(chan interface{}, 1)
 	var visited sync.Map
 
-	for i := range maxConcurrent {
-		go pageWorker(ctx, i, jobCh, resCh, &visited, baseDir, &httpClientPool, logger)
+	for i := range config.MaxConcurrent {
+		go pageWorker(ctx, i, jobCh, resCh, &visited, config, &httpClientPool, logger)
 	}
 
 	var cnt = 0
-	go handleResults(ctx, jobCh, resCh, done, &visited, &cnt, baseDir, pagesLimit, logger)
+	go handleResults(ctx, jobCh, resCh, done, &visited, &cnt, config, logger)
 
 	// starting
-	page, err := internal.NewPage(startUrl)
+	page, err := internal.NewPage(config.StartURL)
 	if err != nil {
-		logger.Error("Failed to parse starting URL", "err", err, "startUrl", startUrl)
+		logger.Error("Failed to parse starting URL", "err", err, "startURL", config.StartURL)
 	}
 	jobCh <- page
 
@@ -67,7 +80,7 @@ func main() {
 }
 
 // handleResults публикует остальные страницы
-func handleResults(ctx context.Context, jobCh chan<- *internal.Page, resCh <-chan *internal.Page, done chan interface{}, visited *sync.Map, cnt *int, baseDir string, pagesLimit int, logger *slog.Logger) {
+func handleResults(ctx context.Context, jobCh chan<- *internal.Page, resCh <-chan *internal.Page, done chan interface{}, visited *sync.Map, cnt *int, config *internal.Config, logger *slog.Logger) {
 	defer close(done)
 	for {
 		page, ok := <-resCh
@@ -78,8 +91,8 @@ func handleResults(ctx context.Context, jobCh chan<- *internal.Page, resCh <-cha
 		pageURL := page.GetURL()
 
 		*cnt += 1
-		if *cnt >= pagesLimit {
-			logger.Info("Pages count limit exceed", "limit", pagesLimit)
+		if *cnt >= config.MaxCount {
+			logger.Info("Pages count limit exceed", "limit", config.MaxCount)
 			return
 		}
 
@@ -102,7 +115,7 @@ func handleResults(ctx context.Context, jobCh chan<- *internal.Page, resCh <-cha
 		}
 
 		// concurrently save?
-		err := saveItem(ctx, baseDir, page)
+		err := saveItem(ctx, config.OutputDir, page)
 		if err != nil {
 			logger.Error("Failed to save", "err", err, "page", page)
 			continue
@@ -113,7 +126,7 @@ func handleResults(ctx context.Context, jobCh chan<- *internal.Page, resCh <-cha
 }
 
 // pageWorker загружает всю страницу целиком, все ее assets и сохраняет все.
-func pageWorker(ctx context.Context, i int, jobCh <-chan *internal.Page, resCh chan<- *internal.Page, visited *sync.Map, baseDir string, httpClientPool *sync.Pool, logger *slog.Logger) {
+func pageWorker(ctx context.Context, i int, jobCh <-chan *internal.Page, resCh chan<- *internal.Page, visited *sync.Map, config *internal.Config, httpClientPool *sync.Pool, logger *slog.Logger) {
 	for {
 		page, ok := <-jobCh
 		if !ok {
@@ -151,7 +164,7 @@ func pageWorker(ctx context.Context, i int, jobCh <-chan *internal.Page, resCh c
 				continue
 			}
 
-			err = saveItem(ctx, baseDir, asset)
+			err = saveItem(ctx, config.OutputDir, asset)
 			if err != nil {
 				logger.Error(fmt.Sprintf("Failed to save %s", assetURL), "err", err)
 				continue
@@ -179,7 +192,7 @@ func pageWorker(ctx context.Context, i int, jobCh <-chan *internal.Page, resCh c
 		}
 		page.Content = buf.Bytes()
 
-		err = saveItem(ctx, baseDir, page)
+		err = saveItem(ctx, config.OutputDir, page)
 		if err != nil {
 			logger.Error(fmt.Sprintf("Failed to save %s", pageURL), "err", err)
 			continue
