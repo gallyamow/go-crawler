@@ -6,7 +6,7 @@ import (
 )
 
 // Parse парсит контент страницы, нормализует ссылки и сохраняет их вместе с оригинальными значениями.
-//func Parse(pageURL *urllib.URL, content []byte) (*Page, error) {
+//func Parse(pageURL *urllib.sourceURL, content []byte) (*Page, error) {
 //	rootNode, parsedResources, err := htmlparser.ParseHTMLResources(content)
 //	if err != nil {
 //		return nil, fmt.Errorf("failed to parse page content: %v", err)
@@ -15,22 +15,22 @@ import (
 //	links, assets := resolveLinksAndAssets(pageURL, parsedResources)
 //
 //	page := &Page{
-//		URL:     pageURL,
+//		sourceURL:     pageURL,
 //		Content: content,
-//		RootNode:    rootNode,
+//		HTMLNode:    rootNode,
 //		Links:   links,
-//		Assets:  assets,
+//		asset:  assets,
 //	}
 //
 //	return page, nil
 //}
 
-func resolveLinksAndAssets(pageURL *urllib.URL, htmlResources []*htmlparser.HTMLResource) ([]*Link, []*Asset) {
+func resolveLinksAndAssets(pageURL *urllib.URL, htmlResources []*htmlparser.HTMLResource) ([]*Link, []*asset) {
 	var links []*Link
-	var assets []*Asset
+	var assets []*asset
 
 	for _, hr := range htmlResources {
-		srcURL, err := urllib.Parse(hr.Value)
+		srcURL, err := urllib.Parse(hr.SourceURL)
 		if err != nil {
 			continue
 		}
@@ -53,13 +53,13 @@ func resolveLinksAndAssets(pageURL *urllib.URL, htmlResources []*htmlparser.HTML
 			}
 
 			links = append(links, &Link{
-				HTMLResource: hr,
-				URL:          srcURL,
+				HTMLNode: hr.Node,
+				URL:      srcURL,
 			})
 		} else {
-			assets = append(assets, &Asset{
-				HTMLResource: hr,
-				URL:          srcURL,
+			assets = append(assets, &asset{
+				HTMLNode:  hr.Node,
+				sourceURL: srcURL,
 			})
 		}
 	}
@@ -69,23 +69,23 @@ func resolveLinksAndAssets(pageURL *urllib.URL, htmlResources []*htmlparser.HTML
 
 //// Transform
 //func (p *Page) Transform() {
-//	assetsMap := buildAssetsURLMapping(p.Assets)
+//	assetsMap := buildAssetsURLMapping(p.asset)
 //
 //	for key, prs := range assetsMap {
 //		for _, p := range prs {
-//			p.URL
+//			p.sourceURL
 //		}
 //	}
 //}
 
-func buildAssetsURLMapping(prs []*Asset) map[string][]*Asset {
-	res := map[string][]*Asset{}
+func buildAssetsURLMapping(prs []*asset) map[string][]*asset {
+	res := map[string][]*asset{}
 
 	for _, p := range prs {
-		key := p.URL.String()
+		key := p.sourceURL.String()
 
 		if _, ok := res[key]; !ok {
-			res[key] = []*Asset{}
+			res[key] = []*asset{}
 		}
 
 		res[key] = append(res[key], p)

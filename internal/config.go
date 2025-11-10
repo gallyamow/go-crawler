@@ -36,7 +36,7 @@ func LoadConfig() (*Config, error) {
 	// Parse command line flags
 	flag.IntVar(&config.MaxCount, "max-count", config.MaxCount, "Maximum number of pages to crawl")
 	flag.IntVar(&config.MaxConcurrent, "max-concurrent", config.MaxConcurrent, "Maximum number of concurrent workers")
-	flag.StringVar(&config.StartURL, "start-url", config.StartURL, "Starting URL for crawling")
+	flag.StringVar(&config.StartURL, "start-url", config.StartURL, "Starting sourceURL for crawling")
 	flag.DurationVar(&config.Timeout, "timeout", config.Timeout, "HTTP request timeout")
 	flag.IntVar(&config.RetryAttempts, "retry-attempts", config.RetryAttempts, "Number of retry attempts for failed requests")
 	flag.DurationVar(&config.RetryDelay, "retry-delay", config.RetryDelay, "Delay between retry attempts")

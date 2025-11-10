@@ -7,12 +7,13 @@ import (
 	"github.com/gallyamow/go-crawler/pkg/htmlparser"
 	"golang.org/x/net/html"
 	urllib "net/url"
-	"path"
+	pathlib "path"
 	"path/filepath"
+	"strings"
 )
 
 type Savable interface {
-	ResolveSavePath() string
+	ResolveRelativeSavePath() string
 	GetContent() []byte
 }
 
@@ -25,12 +26,16 @@ type Parsable interface {
 	Child() []any
 }
 
+type Transformable interface {
+	RefreshHTMLNodeURL(string)
+}
+
 type Page struct {
 	URL      *urllib.URL
-	RootNode *html.Node
+	HTMLNode *html.Node
 	Content  []byte
 	Links    []*Link
-	Assets   []*Asset
+	Assets   []*asset
 }
 
 func NewPage(rawURL string) (*Page, error) {
@@ -44,16 +49,16 @@ func NewPage(rawURL string) (*Page, error) {
 	}, nil
 }
 
-func (p *Page) GetURL() string {
-	return p.URL.String()
-}
-
-func (p *Page) ResolveSavePath() string {
-	return pagePath(p.URL)
+func (p *Page) ResolveRelativeSavePath() string {
+	return resolveLocalSavePath(p.URL, "index", "html")
 }
 
 func (p *Page) GetContent() []byte {
 	return p.Content
+}
+
+func (p *Page) GetURL() string {
+	return p.URL.String()
 }
 
 func (p *Page) SetContent(content []byte) error {
@@ -66,7 +71,7 @@ func (p *Page) SetContent(content []byte) error {
 	links, assets := resolveLinksAndAssets(p.URL, parsedResources)
 
 	p.Content = content
-	p.RootNode = rootNode
+	p.HTMLNode = rootNode
 	p.Links = links
 	p.Assets = assets
 
@@ -90,50 +95,45 @@ func (p *Page) Child() []any {
 }
 
 type Link struct {
-	URL          *urllib.URL
-	HTMLResource *htmlparser.HTMLResource
+	URL      *urllib.URL
+	HTMLNode *html.Node
 }
 
-func (l *Link) ResolveSavePath() string {
-	return pagePath(l.URL)
+func (l *Link) RefreshHTMLNodeURL(pagePath string) {
+	newURL := makeRelativeURL(pagePath, resolveLocalSavePath(l.URL, "", "html"))
+	htmlparser.SetHTMLNodeAttrValue(l.HTMLNode, "href", newURL)
 }
 
-type Asset struct {
-	URL          *urllib.URL
-	HTMLResource *htmlparser.HTMLResource
-	Content      []byte
+type CssFiles asset
+type ScriptFile asset
+type ImageFile asset
+
+type asset struct {
+	sourceURL *urllib.URL
+	HTMLNode  *html.Node
+	Content   []byte
 }
 
-func (r *Asset) GetURL() string {
-	return r.URL.String()
+func (r *asset) GetURL() string {
+	return r.sourceURL.String()
 }
 
-func (r *Asset) ResolveSavePath() string {
-	dir := path.Dir(r.URL.Path)
-
-	var name string
-	name = path.Base(r.URL.Path)
-
-	// fallback name
-	if name == "." || name == "/" {
-		// расширение?
-		name = hasher(r.URL.String())
-	}
-
-	return filepath.Join(dir, name)
+func (r *asset) ResolveRelativeSavePath() string {
+	return resolveLocalSavePath(r.sourceURL, "", "")
 }
 
-func (r *Asset) GetContent() []byte {
+func (r *asset) GetContent() []byte {
 	return r.Content
 }
 
-func (r *Asset) SetContent(content []byte) error {
+func (r *asset) SetContent(content []byte) error {
 	r.Content = content
 	return nil
 }
 
-func (r *Asset) Child() []any {
-	return []any{}
+func (r *asset) RefreshHTMLNodeURL(pagePath string) {
+	newURL := makeRelativeURL(pagePath, r.ResolveRelativeSavePath())
+	htmlparser.SetHTMLNodeAttrValue(r.HTMLNode, "href", newURL)
 }
 
 func hasher(s string) string {
@@ -141,14 +141,40 @@ func hasher(s string) string {
 	return hex.EncodeToString(hash[:])
 }
 
-func pagePath(u *urllib.URL) string {
-	dir := path.Dir(u.Path)
+func resolveLocalSavePath(url *urllib.URL, fallbackName string, ext string) string {
+	dir := pathlib.Dir(url.Path)
+	name := pathlib.Base(url.Path)
 
-	name := path.Base(u.Path)
 	if name == "." || name == "/" {
-		// fallback name
-		name = "index"
+		name = fallbackName
 	}
 
-	return filepath.Join(dir, name) + ".html"
+	if name == "" {
+		name = hasher(url.String())
+	}
+
+	path := filepath.Join(dir, name)
+	if ext != "" {
+		path += "." + ext
+	}
+	return path
+
+}
+
+func makeRelativeURL(rootPath, localPath string) string {
+	fromDir := filepath.Dir(rootPath)
+	rel, err := filepath.Rel(fromDir, localPath)
+
+	// fallback
+	if err != nil {
+		return "./" + filepath.Base(localPath)
+	}
+
+	// replace slashes
+	rel = strings.ReplaceAll(rel, string(filepath.Separator), "/")
+	if !strings.HasPrefix(rel, ".") {
+		rel = "./" + rel
+	}
+
+	return rel
 }

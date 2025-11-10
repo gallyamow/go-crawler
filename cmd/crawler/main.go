@@ -11,7 +11,6 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
-	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -63,7 +62,7 @@ func main() {
 	// starting
 	page, err := internal.NewPage(config.StartURL)
 	if err != nil {
-		logger.Error("Failed to parse starting URL", "err", err, "startURL", config.StartURL)
+		logger.Error("Failed to parse starting sourceURL", "err", err, "startURL", config.StartURL)
 	}
 	jobCh <- page
 
@@ -115,13 +114,13 @@ func handleResults(ctx context.Context, jobCh chan<- *internal.Page, resCh <-cha
 		}
 
 		// concurrently save?
-		err := saveItem(ctx, config.OutputDir, page)
+		path, err := saveItem(ctx, config.OutputDir, page)
 		if err != nil {
 			logger.Error("Failed to save", "err", err, "page", page)
 			continue
 		}
 
-		logger.Info(fmt.Sprintf("Saved %s", pageURL))
+		logger.Info(fmt.Sprintf("Saved %s as %s", pageURL, path))
 	}
 }
 
@@ -153,7 +152,7 @@ func pageWorker(ctx context.Context, i int, jobCh <-chan *internal.Page, resCh c
 				break
 			}
 
-			assetURL := asset.URL.String()
+			assetURL := asset.GetURL()
 			if _, seen := visited.Load(assetURL); seen {
 				continue
 			}
@@ -164,41 +163,41 @@ func pageWorker(ctx context.Context, i int, jobCh <-chan *internal.Page, resCh c
 				continue
 			}
 
-			err = saveItem(ctx, config.OutputDir, asset)
+			path, err := saveItem(ctx, config.OutputDir, asset)
 			if err != nil {
 				logger.Error(fmt.Sprintf("Failed to save %s", assetURL), "err", err)
 				continue
 			}
 
 			visited.Store(assetURL, struct{}{})
-			logger.Info(fmt.Sprintf("Asset saved %s", assetURL))
+			logger.Info(fmt.Sprintf("asset %s saved as %s", assetURL, path))
 		}
 
 		// rewrite scr nodes
-		pagePath := page.ResolveSavePath()
+		pagePath := page.ResolveRelativeSavePath()
 		for _, asset := range page.Assets {
-			asset.HTMLResource.SetSrc(makeRelativeURL(pagePath, asset.ResolveSavePath()))
+			asset.RefreshHTMLNodeURL(pagePath) // makeRelativeURL(pagePath, asset.ResolveRelativeSavePath()))
 		}
 		for _, link := range page.Links {
-			link.HTMLResource.SetSrc(makeRelativeURL(pagePath, link.ResolveSavePath()))
+			link.RefreshHTMLNodeURL(pagePath) //makeRelativeURL(pagePath, link.ResolveRelativeSavePath()))
 		}
 
 		// replace content
 		var buf bytes.Buffer
-		err = html.Render(&buf, page.RootNode)
+		err = html.Render(&buf, page.HTMLNode)
 		if err != nil {
 			logger.Error(fmt.Sprintf("Failed to transform %s", pageURL), "err", err)
 			continue
 		}
 		page.Content = buf.Bytes()
 
-		err = saveItem(ctx, config.OutputDir, page)
+		path, err := saveItem(ctx, config.OutputDir, page)
 		if err != nil {
 			logger.Error(fmt.Sprintf("Failed to save %s", pageURL), "err", err)
 			continue
 		}
 
-		logger.Info(fmt.Sprintf("Page saved %s", pageURL))
+		logger.Info(fmt.Sprintf("Page saved %s as %s", pageURL, path))
 
 		select {
 		case <-ctx.Done():
@@ -227,34 +226,16 @@ func downloadItem(ctx context.Context, item internal.Downloadable, httpClientPoo
 	return nil
 }
 
-func saveItem(ctx context.Context, baseDir string, item internal.Savable) error {
-	savePath := filepath.Join(baseDir, item.ResolveSavePath())
+func saveItem(ctx context.Context, baseDir string, item internal.Savable) (string, error) {
+	savePath := filepath.Join(baseDir, item.ResolveRelativeSavePath())
 
 	if err := os.MkdirAll(filepath.Dir(savePath), 0755); err != nil {
-		return fmt.Errorf("create directory: %w", err)
+		return "", fmt.Errorf("create directory: %w", err)
 	}
 
 	if err := os.WriteFile(savePath, item.GetContent(), 0644); err != nil {
-		return fmt.Errorf("write file: %w", err)
+		return "", fmt.Errorf("write file: %w", err)
 	}
 
-	return nil
-}
-
-func makeRelativeURL(pagePath, assetPath string) string {
-	fromDir := filepath.Dir(pagePath)
-	rel, err := filepath.Rel(fromDir, assetPath)
-
-	// fallback
-	if err != nil {
-		return "./" + filepath.Base(assetPath)
-	}
-
-	// replace slashes
-	rel = strings.ReplaceAll(rel, string(filepath.Separator), "/")
-	if !strings.HasPrefix(rel, ".") {
-		rel = "./" + rel
-	}
-
-	return rel
+	return savePath, nil
 }

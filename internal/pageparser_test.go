@@ -16,68 +16,84 @@ func TestParse(t *testing.T) {
 		}
 
 		testUrl := "https://www.sheldonbrown.com/web_sample1.html"
-		page, err := Parse("https://www.sheldonbrown.com/web_sample1.html", content)
+		page, _ := NewPage(testUrl)
+
+		err = page.SetContent(content)
 		if err != nil {
 			t.Fatalf("failed to parse test page %q: %v", testUrl, err)
 		}
 
-		// все URL без anchor
-		a := []string{
+		var gotLinks []string
+
+		// все sourceURL без anchor
+		internalLinks := []string{
 			"https://www.sheldonbrown.com/index.html",
 			"https://www.sheldonbrown.com/web_glossary.html",
 			"https://www.sheldonbrown.com/web_sample1.html",
 		}
-		assertAllUrlFound(t, "a", page.Links, a)
 
-		externalA := []string{
+		gotLinks = []string{}
+		for _, l := range page.Links {
+			gotLinks = append(gotLinks, l.URL.String())
+		}
+		assertAllUrlsFound(t, gotLinks, internalLinks)
+
+		externalLinks := []string{
 			"https://www.external.com/1.html",
 			"https://www.google.com/",
 			"https://www.ya.ru/some_path",
 		}
-		assertAllUrlNotFound(t, "a", page.Links, externalA)
+		assertAllUrlsNotFound(t, gotLinks, externalLinks)
 
-		css := []string{
+		gotAssets := []string{}
+		for _, l := range page.Assets {
+			gotLinks = append(gotAssets, l.GetURL())
+		}
+
+		internalCss := []string{
 			"https://www.sheldonbrown.com/common-data/document.css",
 			"https://www.sheldonbrown.com/common-data/screen.css",
 			"https://www.sheldonbrown.com/common-data/print.css",
 		}
-		assertAllUrlFound(t, "link", page.Assets, css)
+
+		assertAllUrlsFound(t, gotAssets, internalCss)
 
 		externalCss := []string{
 			"https://www.external.com/1.css",
 		}
-		assertAllUrlFound(t, "link", page.Assets, externalCss)
+		assertAllUrlsNotFound(t, gotAssets, externalCss)
 
-		scripts := []string{
+		internalScripts := []string{
 			"https://www.sheldonbrown.com/common-data/added.js?someAttr=true",
 			"https://www.sheldonbrown.com/common-data/added2.js",
 		}
-		assertAllUrlFound(t, "script", page.Assets, scripts)
+
+		assertAllUrlsFound(t, gotAssets, internalScripts)
 
 		externalScripts := []string{
 			"https://www.googletagmanager.com/gtag/js?id=G-YRNYST4RX7",
 			"http://pagead2.googlesyndication.com/pagead/show_ads.js",
 			"https://www.external.com/1.js",
 		}
-		assertAllUrlFound(t, "script", page.Assets, externalScripts)
+		assertAllUrlsNotFound(t, gotAssets, externalScripts)
 
 		imgs := []string{
 			"https://www.sheldonbrown.com/images/scb_eagle_contact.jpeg",
 		}
-		assertAllUrlFound(t, "img", page.Assets, imgs)
+		assertAllUrlsFound(t, gotAssets, imgs)
 
 		externalImgs := []string{
 			"https://www.external.com/1.jpg",
 		}
-		assertAllUrlFound(t, "img", page.Assets, externalImgs)
+		assertAllUrlsNotFound(t, gotAssets, externalImgs)
 	})
 }
 
-func assertAllUrlFound(t *testing.T, tag string, got []*Asset, want []string) {
+func assertAllUrlsFound(t *testing.T, got []string, want []string) {
 	for _, w := range want {
 		found := false
-		for _, r := range got {
-			if r.Node.Data == tag && r.URL.String() == w {
+		for _, g := range got {
+			if g == w {
 				found = true
 			}
 		}
@@ -88,11 +104,11 @@ func assertAllUrlFound(t *testing.T, tag string, got []*Asset, want []string) {
 	}
 }
 
-func assertAllUrlNotFound(t *testing.T, tag string, got []*Asset, want []string) {
+func assertAllUrlsNotFound(t *testing.T, got []string, want []string) {
 	for _, w := range want {
 		found := false
-		for _, r := range got {
-			if r.Node.Data == tag && r.URL.String() == w {
+		for _, g := range got {
+			if g == w {
 				found = true
 			}
 		}

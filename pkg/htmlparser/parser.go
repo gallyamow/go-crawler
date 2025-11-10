@@ -8,25 +8,25 @@ import (
 )
 
 type HTMLResource struct {
-	Node  *html.Node
-	Value string
-}
-
-func (rn *HTMLResource) SetSrc(newSrc string) bool {
-	switch rn.Tag() {
-	case "script", "img":
-		return setAttrValue(rn.Node, "newSrc", newSrc)
-	case "link":
-		return setAttrValue(rn.Node, "href", newSrc)
-	case "a":
-		return setAttrValue(rn.Node, "href", newSrc)
-	}
-	return false
+	Node      *html.Node
+	SourceURL string
 }
 
 func (rn *HTMLResource) Tag() string {
 	return rn.Node.Data
 }
+
+//func (rn *HTMLResource) SetSourceURL(newSrc string) bool {
+//	switch rn.Tag() {
+//	case "script", "img":
+//		return SetHTMLNodeAttrValue(rn.HTMLNode, "newSrc", newSrc)
+//	case "link":
+//		return SetHTMLNodeAttrValue(rn.HTMLNode, "href", newSrc)
+//	case "a":
+//		return SetHTMLNodeAttrValue(rn.HTMLNode, "href", newSrc)
+//	}
+//	return false
+//}
 
 // ParseHTMLResources парсит html и возвращает данные как есть.
 func ParseHTMLResources(pageContent []byte) (*html.Node, []*HTMLResource, error) {
@@ -43,15 +43,15 @@ func ParseHTMLResources(pageContent []byte) (*html.Node, []*HTMLResource, error)
 
 		switch tag {
 		case "script", "img":
-			src, ok = readAttrValue(node, "src")
+			src, ok = ReadHTMLNodeAttrValue(node, "src")
 		case "link":
-			typeAttr, _ := readAttrValue(node, "type")
-			relAttr, _ := readAttrValue(node, "rel")
+			typeAttr, _ := ReadHTMLNodeAttrValue(node, "type")
+			relAttr, _ := ReadHTMLNodeAttrValue(node, "rel")
 			if typeAttr == "text/css" || relAttr == "stylesheet" {
-				src, ok = readAttrValue(node, "href")
+				src, ok = ReadHTMLNodeAttrValue(node, "href")
 			}
 		case "a":
-			src, ok = readAttrValue(node, "href")
+			src, ok = ReadHTMLNodeAttrValue(node, "href")
 		}
 
 		if !ok {
@@ -59,8 +59,8 @@ func ParseHTMLResources(pageContent []byte) (*html.Node, []*HTMLResource, error)
 		}
 
 		return &HTMLResource{
-			Node:  node,
-			Value: src,
+			Node:      node,
+			SourceURL: src,
 		}, true
 	})
 
@@ -85,7 +85,7 @@ func collect(node *html.Node, tags []string, match func(*html.Node) (*HTMLResour
 	return res
 }
 
-func readAttrValue(node *html.Node, attrName string) (string, bool) {
+func ReadHTMLNodeAttrValue(node *html.Node, attrName string) (string, bool) {
 	for _, attr := range node.Attr {
 		if attr.Key == attrName {
 			return attr.Val, true
@@ -95,7 +95,7 @@ func readAttrValue(node *html.Node, attrName string) (string, bool) {
 	return "", false
 }
 
-func setAttrValue(node *html.Node, attrName string, attrValue string) bool {
+func SetHTMLNodeAttrValue(node *html.Node, attrName string, attrValue string) bool {
 	for i, attr := range node.Attr {
 		if attr.Key == attrName {
 			node.Attr[i].Val = attrValue

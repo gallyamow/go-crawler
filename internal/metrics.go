@@ -133,7 +133,7 @@ type Stats struct {
 
 func (s Stats) String() string {
 	return fmt.Sprintf(
-		"Pages: %d crawled, %d failed | Links: %d | Assets: %d | Bytes: %d | Workers: %d/%d | Uptime: %v | Avg Response: %v",
+		"Pages: %d crawled, %d failed | Links: %d | asset: %d | Bytes: %d | Workers: %d/%d | Uptime: %v | Avg Response: %v",
 		s.PagesCrawled, s.PagesFailed, s.LinksDiscovered, s.AssetsFound, s.BytesDownloaded,
 		s.ActiveWorkers, s.TotalWorkers, s.Uptime, s.AverageResponseTime,
 	)

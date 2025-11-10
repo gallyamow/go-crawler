@@ -31,13 +31,13 @@ func TestParse(t *testing.T) {
 
 			switch tag {
 			case "a":
-				a = append(a, res.Value)
+				a = append(a, res.SourceURL)
 			case "link":
-				css = append(css, res.Value)
+				css = append(css, res.SourceURL)
 			case "script":
-				scripts = append(scripts, res.Value)
+				scripts = append(scripts, res.SourceURL)
 			case "img":
-				imgs = append(imgs, res.Value)
+				imgs = append(imgs, res.SourceURL)
 			}
 		}
 
