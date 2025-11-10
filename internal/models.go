@@ -11,12 +11,18 @@ import (
 	"path/filepath"
 )
 
-type CrawledItem interface {
-	GetURL() string
+type Savable interface {
 	ResolveSavePath() string
 	GetContent() []byte
+}
+
+type Downloadable interface {
+	GetURL() string
 	SetContent(content []byte) error
-	//Child() []CrawledItem
+}
+
+type Parsable interface {
+	Child() []any
 }
 
 type Page struct {
@@ -24,7 +30,7 @@ type Page struct {
 	RootNode *html.Node
 	Content  []byte
 	Links    []*Link
-	Assets   []*Resource
+	Assets   []*Asset
 }
 
 func NewPage(rawURL string) (*Page, error) {
@@ -67,22 +73,21 @@ func (p *Page) SetContent(content []byte) error {
 	return nil
 }
 
-//func (p *Page) Child() []CrawledItem {
-//	var res []CrawledItem
-//
-//	// @idiomatic: interface slice conversion
-//	// так нельзя, срезы разных типов — несовместимы, нужно преобразовать вручную
-//	// res = append(res, p.Links...)
-//	for _, link := range p.Links {
-//		res = append(res, link)
-//	}
-//
-//	for _, asset := range p.Assets {
-//		res = append(res, asset)
-//	}
-//
-//	return res
-//}
+func (p *Page) Child() []any {
+	var res []any
+
+	// @idiomatic: interface slice conversion
+	// (append(res, p.Links...) -  нельзя, срезы разных типов — несовместимы, нужно преобразовать вручную)
+	for _, link := range p.Links {
+		res = append(res, link)
+	}
+
+	for _, asset := range p.Assets {
+		res = append(res, asset)
+	}
+
+	return res
+}
 
 type Link struct {
 	URL          *urllib.URL
@@ -93,17 +98,17 @@ func (l *Link) ResolveSavePath() string {
 	return pagePath(l.URL)
 }
 
-type Resource struct {
+type Asset struct {
 	URL          *urllib.URL
 	HTMLResource *htmlparser.HTMLResource
 	Content      []byte
 }
 
-func (r *Resource) GetURL() string {
+func (r *Asset) GetURL() string {
 	return r.URL.String()
 }
 
-func (r *Resource) ResolveSavePath() string {
+func (r *Asset) ResolveSavePath() string {
 	dir := path.Dir(r.URL.Path)
 
 	var name string
@@ -118,18 +123,18 @@ func (r *Resource) ResolveSavePath() string {
 	return filepath.Join(dir, name)
 }
 
-func (r *Resource) GetContent() []byte {
+func (r *Asset) GetContent() []byte {
 	return r.Content
 }
 
-func (r *Resource) SetContent(content []byte) error {
+func (r *Asset) SetContent(content []byte) error {
 	r.Content = content
 	return nil
 }
 
-//func (r *Resource) Child() []CrawledItem {
-//	return []CrawledItem{}
-//}
+func (r *Asset) Child() []any {
+	return []any{}
+}
 
 func hasher(s string) string {
 	hash := md5.Sum([]byte(s))

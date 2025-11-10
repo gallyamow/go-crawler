@@ -25,12 +25,12 @@ import (
 //	return page, nil
 //}
 
-func resolveLinksAndAssets(pageURL *urllib.URL, htmlResources []*htmlparser.HTMLResource) ([]*Link, []*Resource) {
+func resolveLinksAndAssets(pageURL *urllib.URL, htmlResources []*htmlparser.HTMLResource) ([]*Link, []*Asset) {
 	var links []*Link
-	var assets []*Resource
+	var assets []*Asset
 
 	for _, hr := range htmlResources {
-		srcURL, err := urllib.Parse(hr.Src)
+		srcURL, err := urllib.Parse(hr.Value)
 		if err != nil {
 			continue
 		}
@@ -57,7 +57,7 @@ func resolveLinksAndAssets(pageURL *urllib.URL, htmlResources []*htmlparser.HTML
 				URL:          srcURL,
 			})
 		} else {
-			assets = append(assets, &Resource{
+			assets = append(assets, &Asset{
 				HTMLResource: hr,
 				URL:          srcURL,
 			})
@@ -78,14 +78,14 @@ func resolveLinksAndAssets(pageURL *urllib.URL, htmlResources []*htmlparser.HTML
 //	}
 //}
 
-func buildAssetsURLMapping(prs []*Resource) map[string][]*Resource {
-	res := map[string][]*Resource{}
+func buildAssetsURLMapping(prs []*Asset) map[string][]*Asset {
+	res := map[string][]*Asset{}
 
 	for _, p := range prs {
 		key := p.URL.String()
 
 		if _, ok := res[key]; !ok {
-			res[key] = []*Resource{}
+			res[key] = []*Asset{}
 		}
 
 		res[key] = append(res[key], p)

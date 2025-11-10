@@ -8,8 +8,8 @@ import (
 )
 
 type HTMLResource struct {
-	Node *html.Node
-	Src  string
+	Node  *html.Node
+	Value string
 }
 
 func (rn *HTMLResource) SetSrc(newSrc string) bool {
@@ -59,8 +59,8 @@ func ParseHTMLResources(pageContent []byte) (*html.Node, []*HTMLResource, error)
 		}
 
 		return &HTMLResource{
-			Node: node,
-			Src:  src,
+			Node:  node,
+			Value: src,
 		}, true
 	})
 

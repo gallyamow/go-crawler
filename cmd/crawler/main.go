@@ -208,7 +208,7 @@ func pageWorker(ctx context.Context, i int, jobCh <-chan *internal.Page, resCh c
 	}
 }
 
-func downloadItem(ctx context.Context, item internal.CrawledItem, httpClientPool *sync.Pool) error {
+func downloadItem(ctx context.Context, item internal.Downloadable, httpClientPool *sync.Pool) error {
 	httpClient := httpClientPool.Get().(*httpclient.Client)
 	defer httpClientPool.Put(httpClient)
 
@@ -227,7 +227,7 @@ func downloadItem(ctx context.Context, item internal.CrawledItem, httpClientPool
 	return nil
 }
 
-func saveItem(ctx context.Context, baseDir string, item internal.CrawledItem) error {
+func saveItem(ctx context.Context, baseDir string, item internal.Savable) error {
 	savePath := filepath.Join(baseDir, item.ResolveSavePath())
 
 	if err := os.MkdirAll(filepath.Dir(savePath), 0755); err != nil {
