@@ -50,14 +50,15 @@ func main() {
 	jobCh := make(chan *internal.Page, config.MaxConcurrent)
 	resCh := make(chan *internal.Page, config.MaxConcurrent)
 	done := make(chan interface{}, 1)
-	var visited sync.Map
+
+	queue := internal.NewQueue()
 
 	for i := range config.MaxConcurrent {
-		go pageWorker(ctx, i, jobCh, resCh, &visited, config, &httpClientPool, logger)
+		go pageWorker(ctx, i, jobCh, resCh, queue, config, &httpClientPool, logger)
 	}
 
 	var cnt = 0
-	go handleResults(ctx, jobCh, resCh, done, &visited, &cnt, config, logger)
+	go handleResults(ctx, jobCh, resCh, done, queue, &cnt, config, logger)
 
 	// starting
 	page, err := internal.NewPage(config.StartURL)
@@ -79,7 +80,7 @@ func main() {
 }
 
 // handleResults публикует остальные страницы
-func handleResults(ctx context.Context, jobCh chan<- *internal.Page, resCh <-chan *internal.Page, done chan interface{}, visited *sync.Map, cnt *int, config *internal.Config, logger *slog.Logger) {
+func handleResults(ctx context.Context, jobCh chan<- *internal.Page, resCh <-chan *internal.Page, done chan interface{}, queue *internal.DownloadableQueue, cnt *int, config *internal.Config, logger *slog.Logger) {
 	defer close(done)
 	for {
 		page, ok := <-resCh
@@ -95,21 +96,23 @@ func handleResults(ctx context.Context, jobCh chan<- *internal.Page, resCh <-cha
 			return
 		}
 
+		queue.Ack(page)
+
 		for _, link := range page.Links {
-			linkURL := link.URL.String()
-			if _, seen := visited.Load(linkURL); seen {
-				continue
+			if ctx.Err() != nil {
+				return
 			}
 
 			newPage := &internal.Page{
 				URL: link.URL,
 			}
 
-			select {
-			case <-ctx.Done():
-				return
-			case jobCh <- newPage:
-				visited.Store(linkURL, struct{}{})
+			if queue.Push(newPage) {
+				select {
+				case <-ctx.Done():
+					return
+				case jobCh <- newPage:
+				}
 			}
 		}
 
@@ -125,7 +128,7 @@ func handleResults(ctx context.Context, jobCh chan<- *internal.Page, resCh <-cha
 }
 
 // pageWorker загружает всю страницу целиком, все ее assets и сохраняет все.
-func pageWorker(ctx context.Context, i int, jobCh <-chan *internal.Page, resCh chan<- *internal.Page, visited *sync.Map, config *internal.Config, httpClientPool *sync.Pool, logger *slog.Logger) {
+func pageWorker(ctx context.Context, i int, jobCh <-chan *internal.Page, resCh chan<- *internal.Page, queue *internal.DownloadableQueue, config *internal.Config, httpClientPool *sync.Pool, logger *slog.Logger) {
 	for {
 		page, ok := <-jobCh
 		if !ok {
@@ -153,9 +156,6 @@ func pageWorker(ctx context.Context, i int, jobCh <-chan *internal.Page, resCh c
 			}
 
 			assetURL := asset.GetURL()
-			if _, seen := visited.Load(assetURL); seen {
-				continue
-			}
 
 			err = downloadItem(ctx, asset, httpClientPool)
 			if err != nil {
@@ -169,7 +169,6 @@ func pageWorker(ctx context.Context, i int, jobCh <-chan *internal.Page, resCh c
 				continue
 			}
 
-			visited.Store(assetURL, struct{}{})
 			logger.Info(fmt.Sprintf("asset %s saved as %s", assetURL, path))
 		}
 
