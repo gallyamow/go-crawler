@@ -7,11 +7,10 @@ A minimalistic, concurrent web crawler written in Go.
 - **Concurrent Processing**: Configurable number of worker goroutines
 - **Graceful Shutdown**: Proper cleanup and signal handling
 - **Retry Logic**: Exponential backoff with configurable retry attempts
-- **Circuit Breaker**: Prevents cascading failures
 - **Metrics & Monitoring**: Comprehensive statistics and performance tracking
 - **Configuration Management**: Environment variables and command-line flags
 - **Error Handling**: Robust error handling with detailed logging
-- **Rate Limiting**: Built-in rate limiting to be respectful to servers
+- **Memory Management**: Efficient memory usage with proper cleanup
 
 ## Usage
 
@@ -36,30 +35,6 @@ go run cmd/crawler/main.go \
 | `--retry-delay`    | `CRAWLER_RETRY_DELAY`    | 1s                    | Delay between retries      |
 | `--output-dir`     | `CRAWLER_OUTPUT_DIR`     | ./.tmp/               | Output directory           |
 | `--log-level`      | `CRAWLER_LOG_LEVEL`      | info                  | Log level                  |
-
-## Performance Features
-
-- **Worker Pool**: Configurable number of concurrent workers
-- **Channel Buffering**: Optimized channel sizes for better throughput
-- **Memory Management**: Efficient memory usage with proper cleanup
-- **Connection Pooling**: HTTP client reuse for better performance
-
-## Monitoring & Observability
-
-The crawler provides comprehensive metrics including:
-
-- Crawl rate (pages per second)
-- Success/failure rates
-- Response time statistics
-- Worker utilization
-- Error tracking and categorization
-
-## Error Handling
-
-- **Network Errors**: Automatic retry with exponential backoff
-- **Parse Errors**: Graceful handling of malformed HTML
-- **Save Errors**: Continues processing even if saving fails
-- **Rate Limiting**: Respects server limits and backs off
 
 ## Future Enhancements
 
