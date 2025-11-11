@@ -16,18 +16,6 @@ func (rn *HTMLResource) Tag() string {
 	return rn.Node.Data
 }
 
-//func (rn *HTMLResource) SetSourceURL(newSrc string) bool {
-//	switch rn.Tag() {
-//	case "script", "img":
-//		return SetHTMLNodeAttrValue(rn.HTMLNode, "newSrc", newSrc)
-//	case "link":
-//		return SetHTMLNodeAttrValue(rn.HTMLNode, "href", newSrc)
-//	case "a":
-//		return SetHTMLNodeAttrValue(rn.HTMLNode, "href", newSrc)
-//	}
-//	return false
-//}
-
 // ParseHTMLResources парсит html и возвращает данные как есть.
 func ParseHTMLResources(pageContent []byte) (*html.Node, []*HTMLResource, error) {
 	rootNode, err := html.Parse(bytes.NewBuffer(pageContent))
@@ -36,24 +24,7 @@ func ParseHTMLResources(pageContent []byte) (*html.Node, []*HTMLResource, error)
 	}
 
 	resources := collect(rootNode, []string{"a", "link", "script", "img"}, func(node *html.Node) (*HTMLResource, bool) {
-		tag := node.Data
-
-		var src string
-		var ok bool
-
-		switch tag {
-		case "script", "img":
-			src, ok = ReadHTMLNodeAttrValue(node, "src")
-		case "link":
-			typeAttr, _ := ReadHTMLNodeAttrValue(node, "type")
-			relAttr, _ := ReadHTMLNodeAttrValue(node, "rel")
-			if typeAttr == "text/css" || relAttr == "stylesheet" {
-				src, ok = ReadHTMLNodeAttrValue(node, "href")
-			}
-		case "a":
-			src, ok = ReadHTMLNodeAttrValue(node, "href")
-		}
-
+		src, ok := ReadResourceURL(node)
 		if !ok {
 			return nil, false
 		}
@@ -65,6 +36,47 @@ func ParseHTMLResources(pageContent []byte) (*html.Node, []*HTMLResource, error)
 	})
 
 	return rootNode, resources, nil
+}
+
+func ReadResourceURL(node *html.Node) (string, bool) {
+	var src string
+	var ok bool
+
+	tag := node.Data
+
+	switch tag {
+	case "script", "img":
+		src, ok = readHTMLNodeAttrValue(node, "src")
+	case "link":
+		typeAttr, _ := readHTMLNodeAttrValue(node, "type")
+		relAttr, _ := readHTMLNodeAttrValue(node, "rel")
+		if typeAttr == "text/css" || relAttr == "stylesheet" {
+			src, ok = readHTMLNodeAttrValue(node, "href")
+		}
+	case "a":
+		src, ok = readHTMLNodeAttrValue(node, "href")
+	}
+
+	if !ok {
+		return "", false
+	}
+
+	return src, true
+}
+
+func WriteResourceURL(node *html.Node, newURL string) bool {
+	tag := node.Data
+
+	switch tag {
+	case "script", "img":
+		return setHTMLNodeAttrValue(node, "newSrc", newURL)
+	case "link":
+		return setHTMLNodeAttrValue(node, "href", newURL)
+	case "a":
+		return setHTMLNodeAttrValue(node, "href", newURL)
+	}
+
+	return false
 }
 
 // collect обходит все узлы и собирает рекурсивно HTMLResource
@@ -85,7 +97,7 @@ func collect(node *html.Node, tags []string, match func(*html.Node) (*HTMLResour
 	return res
 }
 
-func ReadHTMLNodeAttrValue(node *html.Node, attrName string) (string, bool) {
+func readHTMLNodeAttrValue(node *html.Node, attrName string) (string, bool) {
 	for _, attr := range node.Attr {
 		if attr.Key == attrName {
 			return attr.Val, true
@@ -95,7 +107,7 @@ func ReadHTMLNodeAttrValue(node *html.Node, attrName string) (string, bool) {
 	return "", false
 }
 
-func SetHTMLNodeAttrValue(node *html.Node, attrName string, attrValue string) bool {
+func setHTMLNodeAttrValue(node *html.Node, attrName string, attrValue string) bool {
 	for i, attr := range node.Attr {
 		if attr.Key == attrName {
 			node.Attr[i].Val = attrValue

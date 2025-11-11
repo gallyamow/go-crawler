@@ -14,6 +14,7 @@ import (
 
 type Savable interface {
 	ResolveRelativeSavePath() string
+	BeforeSave()
 	GetContent() []byte
 }
 
@@ -25,10 +26,6 @@ type Downloadable interface {
 
 type Parsable interface {
 	Child() []any
-}
-
-type Transformable interface {
-	RefreshHTMLNodeURL(string)
 }
 
 type Page struct {
@@ -83,6 +80,21 @@ func (p *Page) SetContent(content []byte) error {
 	return nil
 }
 
+// BeforeSave переписывает src ресурсов relative относительно директории страницы значением.
+func (p *Page) BeforeSave() {
+	pagePath := p.ResolveRelativeSavePath()
+
+	for _, asset := range p.Assets {
+		newURL := makeRelativeURL(pagePath, asset.ResolveRelativeSavePath())
+		htmlparser.WriteResourceURL(asset.HTMLNode, newURL)
+	}
+
+	for _, link := range p.Links {
+		newURL := makeRelativeURL(pagePath, resolveLocalSavePath(link.URL, "", "html"))
+		htmlparser.WriteResourceURL(link.HTMLNode, newURL)
+	}
+}
+
 func (p *Page) Child() []any {
 	var res []any
 
@@ -104,14 +116,15 @@ type Link struct {
 	HTMLNode *html.Node
 }
 
-func (l *Link) RefreshHTMLNodeURL(pagePath string) {
-	newURL := makeRelativeURL(pagePath, resolveLocalSavePath(l.URL, "", "html"))
-	htmlparser.SetHTMLNodeAttrValue(l.HTMLNode, "href", newURL)
+type CssFile struct {
+	asset
 }
-
-type CssFiles asset
-type ScriptFile asset
-type ImageFile asset
+type ScriptFile struct {
+	asset
+}
+type ImageFile struct {
+	asset
+}
 
 type asset struct {
 	sourceURL *urllib.URL
@@ -140,9 +153,8 @@ func (r *asset) SetContent(content []byte) error {
 	return nil
 }
 
-func (r *asset) RefreshHTMLNodeURL(pagePath string) {
-	newURL := makeRelativeURL(pagePath, r.ResolveRelativeSavePath())
-	htmlparser.SetHTMLNodeAttrValue(r.HTMLNode, "href", newURL)
+func (r *asset) BeforeSave() {
+	// noting to do
 }
 
 func hasher(s string) string {
