@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"github.com/gallyamow/go-crawler/internal"
 	"github.com/gallyamow/go-crawler/pkg/httpclient"
+	"github.com/gallyamow/go-crawler/pkg/retry"
 	"golang.org/x/net/html"
 	"log/slog"
 	"os"
@@ -17,15 +18,15 @@ import (
 )
 
 func main() {
-	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
-		Level: slog.LevelInfo,
-	}))
-
 	config, err := internal.LoadConfig()
 	if err != nil {
-		logger.Error("Failed to load configuration", "err", err)
+		fmt.Printf("Failed to load configuration %v", err)
 		os.Exit(1)
 	}
+
+	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
+		Level: config.SlogValue(),
+	}))
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -43,7 +44,7 @@ func main() {
 
 	var httpClientPool = sync.Pool{
 		New: func() any {
-			return httpclient.NewClient()
+			return httpclient.NewClient(httpclient.WithTimeout(config.Timeout))
 		},
 	}
 
@@ -125,6 +126,90 @@ func handleResults(ctx context.Context, jobCh chan<- *internal.Page, resCh <-cha
 
 		logger.Info(fmt.Sprintf("Saved %s as %s", pageURL, path))
 	}
+}
+
+func downloadStage(ctx context.Context, inCh <-chan internal.Downloadable, config internal.Config, httpClientPool *sync.Pool, logger *slog.Logger) chan<- internal.Downloadable {
+	outCh := make(chan internal.Downloadable)
+
+	for range config.MaxConcurrent {
+		go func() {
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case item, ok := <-inCh:
+					if !ok {
+						return
+					}
+
+					size, err := retry.Retry[int](ctx, func() (int, error) {
+						downloadErr := downloadItem(ctx, item, httpClientPool)
+						if downloadErr != nil {
+							return 0, downloadErr
+						}
+						return item.GetSize(), nil
+					}, retry.NewConfig(retry.WithMaxAttempts(config.RetryAttempts), retry.WithDelay(config.RetryDelay)))
+
+					if err != nil {
+						logger.Info(fmt.Sprintf("Item '%s' downloading skipped after %d attempts with error %v.", item.GetURL(), config.RetryAttempts, err))
+						continue
+					}
+
+					logger.Info(fmt.Sprintf("Item '%s' downloaded, %d bytes.", item.GetURL(), size))
+
+					select {
+					case <-ctx.Done():
+						return
+					case outCh <- item:
+					}
+				}
+			}
+		}()
+	}
+
+	return outCh
+}
+
+func saveStage(ctx context.Context, inCh <-chan internal.Savable, config internal.Config, httpClientPool *sync.Pool, logger *slog.Logger) chan<- internal.Savable {
+	outCh := make(chan internal.Savable)
+
+	for range config.MaxConcurrent {
+		go func() {
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case item, ok := <-inCh:
+					if !ok {
+						return
+					}
+
+					path, err := retry.Retry[string](ctx, func() (string, error) {
+						path, saveErr := saveItem(ctx, config.OutputDir, item)
+						if saveErr != nil {
+							return "", saveErr
+						}
+						return path, nil
+					}, retry.NewConfig(retry.WithMaxAttempts(config.RetryAttempts), retry.WithDelay(config.RetryDelay)))
+
+					if err != nil {
+						logger.Info(fmt.Sprintf("Item '%s' saving skipped after %d attempts with error %v.", path, config.RetryAttempts, err))
+						continue
+					}
+
+					logger.Info(fmt.Sprintf("Item '%s' saved.", path))
+
+					select {
+					case <-ctx.Done():
+						return
+					case outCh <- item:
+					}
+				}
+			}
+		}()
+	}
+
+	return outCh
 }
 
 // pageWorker загружает всю страницу целиком, все ее assets и сохраняет все.

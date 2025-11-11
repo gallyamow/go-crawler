@@ -20,6 +20,7 @@ type Savable interface {
 type Downloadable interface {
 	GetURL() string
 	SetContent(content []byte) error
+	GetSize() int
 }
 
 type Parsable interface {
@@ -59,6 +60,10 @@ func (p *Page) GetContent() []byte {
 
 func (p *Page) GetURL() string {
 	return p.URL.String()
+}
+
+func (p *Page) GetSize() int {
+	return len(p.Content)
 }
 
 func (p *Page) SetContent(content []byte) error {
@@ -116,6 +121,10 @@ type asset struct {
 
 func (r *asset) GetURL() string {
 	return r.sourceURL.String()
+}
+
+func (r *asset) GetSize() int {
+	return len(r.Content)
 }
 
 func (r *asset) ResolveRelativeSavePath() string {

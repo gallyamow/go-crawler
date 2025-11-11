@@ -3,6 +3,7 @@ package internal
 import (
 	"flag"
 	"fmt"
+	"log/slog"
 	"os"
 	"strconv"
 	"time"
@@ -84,6 +85,21 @@ func (c *Config) String() string {
 		"Config{MaxCount: %d, MaxConcurrent: %d, StartURL: %s, Timeout: %v, RetryAttempts: %d, RetryDelay: %v, OutputDir: %s, LogLevel: %s}",
 		c.MaxCount, c.MaxConcurrent, c.StartURL, c.Timeout, c.RetryAttempts, c.RetryDelay, c.OutputDir, c.LogLevel,
 	)
+}
+
+func (c *Config) SlogValue() slog.Level {
+	switch c.LogLevel {
+	case "debug":
+		return slog.LevelDebug
+	case "info":
+		return slog.LevelInfo
+	case "warn":
+		return slog.LevelWarn
+	case "error":
+		return slog.LevelError
+	default:
+		panic(fmt.Sprintf("invalid log level %q", c.LogLevel))
+	}
 }
 
 func getEnvString(key, defaultValue string) string {
