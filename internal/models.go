@@ -25,7 +25,7 @@ type Downloadable interface {
 }
 
 type Parsable interface {
-	Child() []any
+	ParseChild() ([]Downloadable, error)
 }
 
 type Page struct {
@@ -64,19 +64,7 @@ func (p *Page) GetSize() int {
 }
 
 func (p *Page) SetContent(content []byte) error {
-	rootNode, parsedResources, err := htmlparser.ParseHTMLResources(content)
-
-	if err != nil {
-		return fmt.Errorf("failed to parse page content: %v", err)
-	}
-
-	links, assets := resolveLinksAndAssets(p.URL, parsedResources)
-
 	p.Content = content
-	p.HTMLNode = rootNode
-	p.Links = links
-	p.Assets = assets
-
 	return nil
 }
 
@@ -95,20 +83,37 @@ func (p *Page) BeforeSave() {
 	}
 }
 
-func (p *Page) Child() []any {
-	var res []any
+func (p *Page) ParseChild() ([]Downloadable, error) {
+	rootNode, parsedResources, err := htmlparser.ParseHTMLResources(p.GetContent())
+
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse page content: %v", err)
+	}
+
+	links, assets := resolveLinksAndAssets(p.URL, parsedResources)
+
+	p.HTMLNode = rootNode
+	p.Links = links
+	p.Assets = assets
+
+	var res []Downloadable
 
 	// @idiomatic: interface slice conversion
 	// (append(res, p.Links...) -  нельзя, срезы разных типов — несовместимы, нужно преобразовать вручную)
-	for _, link := range p.Links {
-		res = append(res, link)
+	for _, l := range p.Links {
+		page, err := NewPage(l.URL.String())
+		if err != nil {
+			// todo log
+			continue
+		}
+		res = append(res, page)
 	}
 
-	for _, asset := range p.Assets {
-		res = append(res, asset)
+	for _, a := range p.Assets {
+		res = append(res, a)
 	}
 
-	return res
+	return res, nil
 }
 
 type Link struct {

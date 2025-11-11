@@ -26,20 +26,8 @@ func main() {
 		Level: config.SlogValue(),
 	}))
 
-	startPage, err := internal.NewPage(config.StartURL)
-	if err != nil {
-		logger.Error("Failed to parse startURL", "err", err, "value", config.StartURL)
-		os.Exit(1)
-	}
-
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-
-	var httpPool = sync.Pool{
-		New: func() any {
-			return httpclient.NewClient(httpclient.WithTimeout(config.Timeout))
-		},
-	}
 
 	// graceful shutdown
 	sigChan := make(chan os.Signal, 1)
@@ -50,19 +38,29 @@ func main() {
 		cancel()
 	}()
 
-	startedAt := time.Now()
+	startPage, err := internal.NewPage(config.StartURL)
+	if err != nil {
+		logger.Error("Failed to parse startURL", "err", err, "value", config.StartURL)
+		os.Exit(1)
+	}
 
-	downloadCh := make(chan *internal.Downloadable, config.MaxConcurrent)
-	done := make(chan interface{}, 1)
+	var httpPool = &sync.Pool{
+		New: func() any {
+			return httpclient.NewClient(httpclient.WithTimeout(config.Timeout))
+		},
+	}
 
-	queue := internal.NewQueue()
+	queue := internal.NewQueue(config.MaxConcurrent)
 	queue.Push(startPage)
 
-	// wait
-	<-done
+	startedAt := time.Now()
+	cnt := 0
+	resCh := saveStage(ctx, downloadStage(ctx, queue.Out(), config, httpPool, logger), config, logger)
 
-	close(downloadCh)
-	close(resCh)
+	for res := range resCh {
+		cnt++
+		logger.Info("Page saved", "url", res.ResolveRelativeSavePath())
+	}
 
 	logger.Info("Crawling completed",
 		"elapsed", time.Since(startedAt).String(),
@@ -70,56 +68,8 @@ func main() {
 	)
 }
 
-// handleResults публикует остальные страницы
-func handleResults(ctx context.Context, jobCh chan<- *internal.Page, resCh <-chan *internal.Page, done chan interface{}, queue *internal.DownloadableQueue, cnt *int, config *internal.Config, logger *slog.Logger) {
-	defer close(done)
-	for {
-		page, ok := <-resCh
-		if !ok {
-			break
-		}
-
-		pageURL := page.GetURL()
-
-		*cnt += 1
-		if *cnt >= config.MaxCount {
-			logger.Info("Pages count limit exceed", "limit", config.MaxCount)
-			return
-		}
-
-		queue.Ack(page)
-
-		for _, link := range page.Links {
-			if ctx.Err() != nil {
-				return
-			}
-
-			newPage := &internal.Page{
-				URL: link.URL,
-			}
-
-			if queue.Push(newPage) {
-				select {
-				case <-ctx.Done():
-					return
-				case jobCh <- newPage:
-				}
-			}
-		}
-
-		// concurrently save?
-		path, err := saveItem(ctx, config.OutputDir, page)
-		if err != nil {
-			logger.Error("Failed to save", "err", err, "page", page)
-			continue
-		}
-
-		logger.Info(fmt.Sprintf("Saved %s as %s", pageURL, path))
-	}
-}
-
-func downloadStage(ctx context.Context, inCh <-chan internal.Downloadable, config internal.Config, httpClientPool *sync.Pool, logger *slog.Logger) chan<- internal.Downloadable {
-	outCh := make(chan internal.Downloadable)
+func downloadStage(ctx context.Context, inCh <-chan internal.Downloadable, config *internal.Config, httpClientPool *sync.Pool, logger *slog.Logger) chan internal.Parsable {
+	outCh := make(chan internal.Parsable)
 
 	var wg sync.WaitGroup
 	wg.Add(config.MaxConcurrent)
@@ -153,7 +103,7 @@ func downloadStage(ctx context.Context, inCh <-chan internal.Downloadable, confi
 					select {
 					case <-ctx.Done():
 						return
-					case outCh <- item:
+					case outCh <- item.(internal.Parsable):
 					}
 				}
 			}
@@ -168,7 +118,53 @@ func downloadStage(ctx context.Context, inCh <-chan internal.Downloadable, confi
 	return outCh
 }
 
-func saveStage(ctx context.Context, inCh <-chan internal.Savable, config internal.Config, logger *slog.Logger) chan<- internal.Savable {
+func parseStage(ctx context.Context, inCh <-chan internal.Parsable, config *internal.Config, logger *slog.Logger) chan internal.Downloadable {
+	outCh := make(chan internal.Downloadable)
+
+	var wg sync.WaitGroup
+	wg.Add(config.MaxConcurrent)
+
+	// concurrently parsing
+	for range config.MaxConcurrent {
+		go func() {
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case item, ok := <-inCh:
+					if !ok {
+						return
+					}
+
+					children, err := item.ParseChild()
+					if err != nil {
+						logger.Info(fmt.Sprintf("Item parsing skipped with error %v.", err))
+						continue
+					}
+
+					logger.Info(fmt.Sprintf("Item parsed."))
+
+					for _, child := range children {
+						select {
+						case <-ctx.Done():
+							return
+						case outCh <- child:
+						}
+					}
+				}
+			}
+		}()
+	}
+
+	defer func() {
+		wg.Wait()
+		close(outCh)
+	}()
+
+	return outCh
+}
+
+func saveStage(ctx context.Context, inCh <-chan internal.Savable, config *internal.Config, logger *slog.Logger) chan internal.Savable {
 	outCh := make(chan internal.Savable)
 
 	var wg sync.WaitGroup

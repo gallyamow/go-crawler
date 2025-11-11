@@ -7,26 +7,22 @@ import (
 type DownloadableQueue struct {
 	pages  map[string]Downloadable
 	assets map[string]Downloadable
-	seen   map[string]interface{}
+	seen   map[string]struct{}
+	outCh  chan Downloadable
 	mu     sync.Mutex
 }
 
-func NewQueue() *DownloadableQueue {
+func NewQueue(bufferSize int) *DownloadableQueue {
 	return &DownloadableQueue{
 		pages:  make(map[string]Downloadable),
 		assets: make(map[string]Downloadable),
-		seen:   make(map[string]interface{}),
+		seen:   make(map[string]struct{}),
+		outCh:  make(chan Downloadable, bufferSize),
 	}
 }
 
 func (q *DownloadableQueue) Out() <-chan Downloadable {
-	outCh := make(chan Downloadable)
-
-	for _, d := range q.assets {
-		outCh <- d
-	}
-
-	return outCh
+	return q.outCh
 }
 
 func (q *DownloadableQueue) Push(d Downloadable) bool {
@@ -38,7 +34,7 @@ func (q *DownloadableQueue) Push(d Downloadable) bool {
 		return false
 	}
 
-	var _ Downloadable = (*CssFile)(nil)
+	//var _ Downloadable = (*CssFile)(nil)
 
 	switch d.(type) {
 	case *Page:
@@ -46,6 +42,10 @@ func (q *DownloadableQueue) Push(d Downloadable) bool {
 	default:
 		q.assets[url] = d
 	}
+
+	q.seen[url] = struct{}{}
+
+	q.outCh <- d
 
 	return true
 }
@@ -63,12 +63,9 @@ func (q *DownloadableQueue) Ack(d Downloadable) Downloadable {
 		delete(q.assets, url)
 	}
 
+	if len(q.pages) == 0 {
+		close(q.outCh)
+	}
+
 	return d
-}
-
-func (q *DownloadableQueue) IsFinished() int {
-	q.mu.Lock()
-	defer q.mu.Unlock()
-
-	return len(q.pages)
 }
