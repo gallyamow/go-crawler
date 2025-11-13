@@ -12,8 +12,8 @@ import (
 	"strings"
 )
 
-type Loggable interface {
-	LogId() string
+type Identifiable interface {
+	ItemId() string
 }
 
 type Transformable interface {
@@ -33,7 +33,7 @@ type Downloadable interface {
 
 type Parsable interface {
 	Parse() error
-	GetChildren() []Downloadable
+	GetChildren() []Identifiable
 }
 
 type Page struct {
@@ -107,8 +107,8 @@ func (p *Page) Parse() error {
 	return nil
 }
 
-func (p *Page) GetChildren() []Downloadable {
-	var res []Downloadable
+func (p *Page) GetChildren() []Identifiable {
+	var res []Identifiable
 
 	// @idiomatic: interface slice conversion
 	// (append(res, p.Links...) -  нельзя, срезы разных типов — несовместимы, нужно преобразовать вручную)
@@ -128,7 +128,7 @@ func (p *Page) GetChildren() []Downloadable {
 	return res
 }
 
-func (p *Page) LogId() string {
+func (p *Page) ItemId() string {
 	return p.GetURL()
 }
 
@@ -174,7 +174,7 @@ func (a *asset) SetContent(content []byte) error {
 	return nil
 }
 
-func (a *asset) LogId() string {
+func (a *asset) ItemId() string {
 	return a.GetURL()
 }
 

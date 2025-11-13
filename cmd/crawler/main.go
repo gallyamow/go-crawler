@@ -23,7 +23,8 @@ func main() {
 	}
 
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
-		Level: config.SlogValue(),
+		//Level: config.SlogValue(),
+		Level: slog.LevelDebug,
 	}))
 
 	// @idiomatic: graceful shutdown (modern way)
@@ -55,10 +56,10 @@ func main() {
 		},
 	}
 
-	queue := internal.NewQueue(config.MaxConcurrent)
+	queue := internal.NewQueue(config.MaxCount, config.MaxConcurrent, logger)
 
 	// building pipeline
-	// should move stages to internal.DownloadableQueue after renaming internal.QueueManager
+	// should move stages to internal.Queue after renaming internal.QueueManager
 	resCh := saveStage(
 		ctx,
 		parseStage(
@@ -76,24 +77,34 @@ func main() {
 	startedAt := time.Now()
 	queue.Push(startPage)
 
-	time.Sleep(time.Second)
+	//time.Sleep(time.Second)
 
-	var cnt = 0
-	for res := range resCh {
-		cnt++
-		logger.Info("Page saved", "url", res.ResolveRelativeSavePath())
+	var pagesCnt, assetsCnt = 0, 0
+
+	for item := range resCh {
+		logId := item.(internal.Identifiable).ItemId()
+		queue.Ack(item)
+
+		switch item.(type) {
+		case *internal.Page:
+			pagesCnt++
+			logger.Info(fmt.Sprintf("Done for page %d of %d", pagesCnt, config.MaxCount))
+		default:
+			assetsCnt++
+			logger.Info(fmt.Sprintf("Done for asset '%s'", logId))
+		}
 	}
 
 	logger.Info("Crawling completed",
 		"elapsed", time.Since(startedAt).String(),
-		"pages_crawled", cnt,
+		"pages_crawled", pagesCnt, "assets_crawled", assetsCnt,
 	)
 }
 
-func downloadStage(ctx context.Context, inCh <-chan internal.Downloadable, config *internal.Config, httpClientPool *sync.Pool, logger *slog.Logger) chan internal.Parsable {
+func downloadStage(ctx context.Context, inCh <-chan internal.Identifiable, config *internal.Config, httpClientPool *sync.Pool, logger *slog.Logger) chan internal.Identifiable {
 	// @idiomatic: используем буферизированные каналы, чтобы сгладить отличающуюся скорость каждой стадий
 	// (например download -долгий, parse - быстрый)
-	outCh := make(chan internal.Parsable, config.MaxConcurrent)
+	outCh := make(chan internal.Identifiable, config.MaxConcurrent)
 
 	var wg sync.WaitGroup
 	wg.Add(config.MaxConcurrent)
@@ -111,29 +122,30 @@ func downloadStage(ctx context.Context, inCh <-chan internal.Downloadable, confi
 						return
 					}
 
-					logId := item.(internal.Loggable).LogId()
-					logger.Info(fmt.Sprintf("Item '%s' received by the 'download' stage", logId))
+					logId := item.(internal.Identifiable).ItemId()
+					logger.Debug(fmt.Sprintf("Item '%s' received by the 'download' stage", logId))
 
+					downloadableItem := item.(internal.Downloadable)
 					size, err := retry.Retry[int](ctx, func() (int, error) {
-						downloadErr := downloadItem(ctx, item, httpClientPool)
+						downloadErr := downloadItem(ctx, downloadableItem, httpClientPool)
 						if downloadErr != nil {
 							return 0, downloadErr
 						}
-						return item.GetSize(), nil
+						return downloadableItem.GetSize(), nil
 					}, retry.NewConfig(retry.WithMaxAttempts(config.RetryAttempts), retry.WithDelay(config.RetryDelay)))
 
 					if err != nil {
-						logger.Info(fmt.Sprintf("Item '%s' downloading skipped, after %d attempts, with error %v.", logId, config.RetryAttempts, err))
+						logger.Debug(fmt.Sprintf("Item '%s' downloading skipped, after %d attempts, with error %v.", logId, config.RetryAttempts, err))
 						continue
 					}
 
-					logger.Info(fmt.Sprintf("Item '%s' downloaded, size %d bytes.", logId, size))
+					logger.Debug(fmt.Sprintf("Item '%s' downloaded, size %d bytes.", logId, size))
 
 					select {
 					case <-ctx.Done():
 						return
-					case outCh <- item.(internal.Parsable):
-						logger.Info(fmt.Sprintf("Item '%s' transmitted from the 'download' stage to next one.", logId))
+					case outCh <- item:
+						logger.Debug(fmt.Sprintf("Item '%s' transmitted from the 'download' stage to next one.", logId))
 					}
 				}
 			}
@@ -148,8 +160,8 @@ func downloadStage(ctx context.Context, inCh <-chan internal.Downloadable, confi
 	return outCh
 }
 
-func parseStage(ctx context.Context, inCh <-chan internal.Parsable, queue *internal.DownloadableQueue, config *internal.Config, logger *slog.Logger) chan internal.Savable {
-	outCh := make(chan internal.Savable, config.MaxConcurrent)
+func parseStage(ctx context.Context, inCh <-chan internal.Identifiable, queue *internal.Queue, config *internal.Config, logger *slog.Logger) chan internal.Identifiable {
+	outCh := make(chan internal.Identifiable, config.MaxConcurrent)
 
 	var wg sync.WaitGroup
 	wg.Add(config.MaxConcurrent)
@@ -169,29 +181,29 @@ func parseStage(ctx context.Context, inCh <-chan internal.Parsable, queue *inter
 						return
 					}
 
-					logId := item.(internal.Loggable).LogId()
-					logger.Info(fmt.Sprintf("Item '%s' received by the 'parse' stage", logId))
+					logId := item.(internal.Identifiable).ItemId()
+					logger.Debug(fmt.Sprintf("Item '%s' received by the 'parse' stage", logId))
 
 					if parsable, ok := item.(internal.Parsable); ok {
 						err := parsable.Parse()
 						if err != nil {
-							logger.Info(fmt.Sprintf("Item '%s' parsing skipped, with error %v.", logId, err))
+							logger.Debug(fmt.Sprintf("Item '%s' parsing skipped, with error %v.", logId, err))
 							continue
 						}
 
-						logger.Info(fmt.Sprintf("Item parsed '%s', child items %d", logId, len(item.GetChildren())))
+						logger.Debug(fmt.Sprintf("Item '%s' parsed, found child items %d", logId, len(parsable.GetChildren())))
 
-						//for _, child := range item.GetChildren() {
-						//	queue.Push(child)
-						//}
+						for _, child := range parsable.GetChildren() {
+							queue.Push(child)
+						}
 					}
 
 					// anyway we should pass item to the next stage
 					select {
 					case <-ctx.Done():
 						return
-					case outCh <- item.(internal.Savable):
-						logger.Info(fmt.Sprintf("Item '%s' transmitted from the 'parse' stage to next one.", logId))
+					case outCh <- item:
+						logger.Debug(fmt.Sprintf("Item '%s' transmitted from the 'parse' stage to next one.", logId))
 					}
 				}
 			}
@@ -206,15 +218,15 @@ func parseStage(ctx context.Context, inCh <-chan internal.Parsable, queue *inter
 	return outCh
 }
 
-func saveStage(ctx context.Context, inCh <-chan internal.Savable, config *internal.Config, logger *slog.Logger) chan internal.Savable {
-	outCh := make(chan internal.Savable, config.MaxConcurrent)
+func saveStage(ctx context.Context, inCh <-chan internal.Identifiable, config *internal.Config, logger *slog.Logger) chan internal.Identifiable {
+	outCh := make(chan internal.Identifiable, config.MaxConcurrent)
 
 	var wg sync.WaitGroup
 	wg.Add(config.MaxConcurrent)
 
 	for range config.MaxConcurrent {
 		go func() {
-			wg.Done()
+			defer wg.Done()
 
 			for {
 				select {
@@ -225,11 +237,11 @@ func saveStage(ctx context.Context, inCh <-chan internal.Savable, config *intern
 						return
 					}
 
-					logId := item.(internal.Loggable).LogId()
-					logger.Info(fmt.Sprintf("Item '%s' received by the 'save' stage", logId))
+					logId := item.(internal.Identifiable).ItemId()
+					logger.Debug(fmt.Sprintf("Item '%s' received by the 'save' stage", logId))
 
 					path, err := retry.Retry[string](ctx, func() (string, error) {
-						p, saveErr := saveItem(ctx, config.OutputDir, item)
+						p, saveErr := saveItem(ctx, config.OutputDir, item.(internal.Savable))
 						if saveErr != nil {
 							return "", saveErr
 						}
@@ -237,17 +249,17 @@ func saveStage(ctx context.Context, inCh <-chan internal.Savable, config *intern
 					}, retry.NewConfig(retry.WithMaxAttempts(config.RetryAttempts), retry.WithDelay(config.RetryDelay)))
 
 					if err != nil {
-						logger.Info(fmt.Sprintf("Item '%s' saving skipped, after %d attempts, with error %v.", logId, config.RetryAttempts, err))
+						logger.Debug(fmt.Sprintf("Item '%s' saving skipped, after %d attempts, with error %v.", logId, config.RetryAttempts, err))
 						continue
 					}
 
-					logger.Info(fmt.Sprintf("Item '%s' saved to '%s'.", logId, path))
+					logger.Debug(fmt.Sprintf("Item '%s' saved to '%s'.", logId, path))
 
 					select {
 					case <-ctx.Done():
 						return
-					case outCh <- item:
-						logger.Info(fmt.Sprintf("Item '%s' transmitted from the 'save' stage to next one.", logId))
+					case outCh <- item.(internal.Identifiable):
+						logger.Debug(fmt.Sprintf("Item '%s' transmitted from the 'save' stage to next one.", logId))
 					}
 				}
 			}
