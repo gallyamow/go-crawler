@@ -26,17 +26,22 @@ func main() {
 		Level: config.SlogValue(),
 	}))
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	// @idiomatic: graceful shutdown (modern way)
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
 
-	// graceful shutdown
-	sigChan := make(chan os.Signal, 1)
-	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
-	go func() {
-		<-sigChan
-		logger.Info("Received shutdown signal, stopping crawler...")
-		cancel()
-	}()
+	// @idiomatic: graceful shutdown (old way)
+	/*
+		sigChan := make(chan os.Signal, 1)
+		// @idiomatic: pass channel to func than writes to it
+		// (SIGKILL - не обрабатывают, потому что ядро немедленно завершает процесс)
+		signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
+		go func() {
+			<-sigChan
+			logger.Info("Received shutdown signal, stopping crawler...")
+			cancel()
+		}()
+	*/
 
 	startPage, err := internal.NewPage(config.StartURL)
 	if err != nil {
@@ -51,12 +56,29 @@ func main() {
 	}
 
 	queue := internal.NewQueue(config.MaxConcurrent)
-	queue.Push(startPage)
+
+	// building pipeline
+	// should move stages to internal.DownloadableQueue after renaming internal.QueueManager
+	resCh := saveStage(
+		ctx,
+		parseStage(
+			ctx,
+			downloadStage(
+				ctx,
+				queue.Out(), config, httpPool, logger,
+			),
+			queue, config, logger,
+		),
+		config,
+		logger,
+	)
 
 	startedAt := time.Now()
-	cnt := 0
-	resCh := saveStage(ctx, downloadStage(ctx, queue.Out(), config, httpPool, logger), config, logger)
+	queue.Push(startPage)
 
+	time.Sleep(time.Second)
+
+	var cnt = 0
 	for res := range resCh {
 		cnt++
 		logger.Info("Page saved", "url", res.ResolveRelativeSavePath())
@@ -69,13 +91,17 @@ func main() {
 }
 
 func downloadStage(ctx context.Context, inCh <-chan internal.Downloadable, config *internal.Config, httpClientPool *sync.Pool, logger *slog.Logger) chan internal.Parsable {
-	outCh := make(chan internal.Parsable)
+	// @idiomatic: используем буферизированные каналы, чтобы сгладить отличающуюся скорость каждой стадий
+	// (например download -долгий, parse - быстрый)
+	outCh := make(chan internal.Parsable, config.MaxConcurrent)
 
 	var wg sync.WaitGroup
 	wg.Add(config.MaxConcurrent)
 
 	for range config.MaxConcurrent {
 		go func() {
+			defer wg.Done()
+
 			for {
 				select {
 				case <-ctx.Done():
@@ -84,6 +110,9 @@ func downloadStage(ctx context.Context, inCh <-chan internal.Downloadable, confi
 					if !ok {
 						return
 					}
+
+					logId := item.(internal.Loggable).LogId()
+					logger.Info(fmt.Sprintf("Item '%s' received by the 'download' stage", logId))
 
 					size, err := retry.Retry[int](ctx, func() (int, error) {
 						downloadErr := downloadItem(ctx, item, httpClientPool)
@@ -94,23 +123,24 @@ func downloadStage(ctx context.Context, inCh <-chan internal.Downloadable, confi
 					}, retry.NewConfig(retry.WithMaxAttempts(config.RetryAttempts), retry.WithDelay(config.RetryDelay)))
 
 					if err != nil {
-						logger.Info(fmt.Sprintf("Item '%s' downloading skipped after %d attempts with error %v.", item.GetURL(), config.RetryAttempts, err))
+						logger.Info(fmt.Sprintf("Item '%s' downloading skipped, after %d attempts, with error %v.", logId, config.RetryAttempts, err))
 						continue
 					}
 
-					logger.Info(fmt.Sprintf("Item '%s' downloaded, %d bytes.", item.GetURL(), size))
+					logger.Info(fmt.Sprintf("Item '%s' downloaded, size %d bytes.", logId, size))
 
 					select {
 					case <-ctx.Done():
 						return
 					case outCh <- item.(internal.Parsable):
+						logger.Info(fmt.Sprintf("Item '%s' transmitted from the 'download' stage to next one.", logId))
 					}
 				}
 			}
 		}()
 	}
 
-	defer func() {
+	go func() {
 		wg.Wait()
 		close(outCh)
 	}()
@@ -118,8 +148,8 @@ func downloadStage(ctx context.Context, inCh <-chan internal.Downloadable, confi
 	return outCh
 }
 
-func parseStage(ctx context.Context, inCh <-chan internal.Parsable, config *internal.Config, logger *slog.Logger) chan internal.Downloadable {
-	outCh := make(chan internal.Downloadable)
+func parseStage(ctx context.Context, inCh <-chan internal.Parsable, queue *internal.DownloadableQueue, config *internal.Config, logger *slog.Logger) chan internal.Savable {
+	outCh := make(chan internal.Savable, config.MaxConcurrent)
 
 	var wg sync.WaitGroup
 	wg.Add(config.MaxConcurrent)
@@ -127,36 +157,48 @@ func parseStage(ctx context.Context, inCh <-chan internal.Parsable, config *inte
 	// concurrently parsing
 	for range config.MaxConcurrent {
 		go func() {
+			defer wg.Done()
+
 			for {
 				select {
 				case <-ctx.Done():
 					return
 				case item, ok := <-inCh:
+
 					if !ok {
 						return
 					}
 
-					children, err := item.ParseChild()
-					if err != nil {
-						logger.Info(fmt.Sprintf("Item parsing skipped with error %v.", err))
-						continue
+					logId := item.(internal.Loggable).LogId()
+					logger.Info(fmt.Sprintf("Item '%s' received by the 'parse' stage", logId))
+
+					if parsable, ok := item.(internal.Parsable); ok {
+						err := parsable.Parse()
+						if err != nil {
+							logger.Info(fmt.Sprintf("Item '%s' parsing skipped, with error %v.", logId, err))
+							continue
+						}
+
+						logger.Info(fmt.Sprintf("Item parsed '%s', child items %d", logId, len(item.GetChildren())))
+
+						//for _, child := range item.GetChildren() {
+						//	queue.Push(child)
+						//}
 					}
 
-					logger.Info(fmt.Sprintf("Item parsed."))
-
-					for _, child := range children {
-						select {
-						case <-ctx.Done():
-							return
-						case outCh <- child:
-						}
+					// anyway we should pass item to the next stage
+					select {
+					case <-ctx.Done():
+						return
+					case outCh <- item.(internal.Savable):
+						logger.Info(fmt.Sprintf("Item '%s' transmitted from the 'parse' stage to next one.", logId))
 					}
 				}
 			}
 		}()
 	}
 
-	defer func() {
+	go func() {
 		wg.Wait()
 		close(outCh)
 	}()
@@ -165,13 +207,15 @@ func parseStage(ctx context.Context, inCh <-chan internal.Parsable, config *inte
 }
 
 func saveStage(ctx context.Context, inCh <-chan internal.Savable, config *internal.Config, logger *slog.Logger) chan internal.Savable {
-	outCh := make(chan internal.Savable)
+	outCh := make(chan internal.Savable, config.MaxConcurrent)
 
 	var wg sync.WaitGroup
 	wg.Add(config.MaxConcurrent)
 
 	for range config.MaxConcurrent {
 		go func() {
+			wg.Done()
+
 			for {
 				select {
 				case <-ctx.Done():
@@ -181,32 +225,36 @@ func saveStage(ctx context.Context, inCh <-chan internal.Savable, config *intern
 						return
 					}
 
+					logId := item.(internal.Loggable).LogId()
+					logger.Info(fmt.Sprintf("Item '%s' received by the 'save' stage", logId))
+
 					path, err := retry.Retry[string](ctx, func() (string, error) {
-						path, saveErr := saveItem(ctx, config.OutputDir, item)
+						p, saveErr := saveItem(ctx, config.OutputDir, item)
 						if saveErr != nil {
 							return "", saveErr
 						}
-						return path, nil
+						return p, nil
 					}, retry.NewConfig(retry.WithMaxAttempts(config.RetryAttempts), retry.WithDelay(config.RetryDelay)))
 
 					if err != nil {
-						logger.Info(fmt.Sprintf("Item '%s' saving skipped after %d attempts with error %v.", path, config.RetryAttempts, err))
+						logger.Info(fmt.Sprintf("Item '%s' saving skipped, after %d attempts, with error %v.", logId, config.RetryAttempts, err))
 						continue
 					}
 
-					logger.Info(fmt.Sprintf("Item '%s' saved.", path))
+					logger.Info(fmt.Sprintf("Item '%s' saved to '%s'.", logId, path))
 
 					select {
 					case <-ctx.Done():
 						return
 					case outCh <- item:
+						logger.Info(fmt.Sprintf("Item '%s' transmitted from the 'save' stage to next one.", logId))
 					}
 				}
 			}
 		}()
 	}
 
-	defer func() {
+	go func() {
 		wg.Wait()
 		close(outCh)
 	}()
@@ -240,7 +288,9 @@ func saveItem(ctx context.Context, baseDir string, item internal.Savable) (strin
 		return "", fmt.Errorf("create directory: %w", err)
 	}
 
-	item.BeforeSave()
+	if transformable, ok := item.(internal.Transformable); ok {
+		transformable.Transform()
+	}
 
 	if err := os.WriteFile(savePath, item.GetContent(), 0644); err != nil {
 		return "", fmt.Errorf("write file: %w", err)

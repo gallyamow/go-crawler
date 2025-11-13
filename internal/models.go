@@ -12,9 +12,16 @@ import (
 	"strings"
 )
 
+type Loggable interface {
+	LogId() string
+}
+
+type Transformable interface {
+	Transform()
+}
+
 type Savable interface {
 	ResolveRelativeSavePath() string
-	BeforeSave()
 	GetContent() []byte
 }
 
@@ -25,7 +32,8 @@ type Downloadable interface {
 }
 
 type Parsable interface {
-	ParseChild() ([]Downloadable, error)
+	Parse() error
+	GetChildren() []Downloadable
 }
 
 type Page struct {
@@ -68,8 +76,8 @@ func (p *Page) SetContent(content []byte) error {
 	return nil
 }
 
-// BeforeSave переписывает src ресурсов relative относительно директории страницы значением.
-func (p *Page) BeforeSave() {
+// Transform переписывает src ресурсов relative относительно директории страницы значением.
+func (p *Page) Transform() {
 	pagePath := p.ResolveRelativeSavePath()
 
 	for _, asset := range p.Assets {
@@ -83,11 +91,11 @@ func (p *Page) BeforeSave() {
 	}
 }
 
-func (p *Page) ParseChild() ([]Downloadable, error) {
+func (p *Page) Parse() error {
 	rootNode, parsedResources, err := htmlparser.ParseHTMLResources(p.GetContent())
 
 	if err != nil {
-		return nil, fmt.Errorf("failed to parse page content: %v", err)
+		return fmt.Errorf("failed to parse page content: %v", err)
 	}
 
 	links, assets := resolveLinksAndAssets(p.URL, parsedResources)
@@ -96,6 +104,10 @@ func (p *Page) ParseChild() ([]Downloadable, error) {
 	p.Links = links
 	p.Assets = assets
 
+	return nil
+}
+
+func (p *Page) GetChildren() []Downloadable {
 	var res []Downloadable
 
 	// @idiomatic: interface slice conversion
@@ -113,7 +125,11 @@ func (p *Page) ParseChild() ([]Downloadable, error) {
 		res = append(res, a)
 	}
 
-	return res, nil
+	return res
+}
+
+func (p *Page) LogId() string {
+	return p.GetURL()
 }
 
 type Link struct {
@@ -137,29 +153,29 @@ type asset struct {
 	Content   []byte
 }
 
-func (r *asset) GetURL() string {
-	return r.sourceURL.String()
+func (a *asset) GetURL() string {
+	return a.sourceURL.String()
 }
 
-func (r *asset) GetSize() int {
-	return len(r.Content)
+func (a *asset) GetSize() int {
+	return len(a.Content)
 }
 
-func (r *asset) ResolveRelativeSavePath() string {
-	return resolveLocalSavePath(r.sourceURL, "", "")
+func (a *asset) ResolveRelativeSavePath() string {
+	return resolveLocalSavePath(a.sourceURL, "", "")
 }
 
-func (r *asset) GetContent() []byte {
-	return r.Content
+func (a *asset) GetContent() []byte {
+	return a.Content
 }
 
-func (r *asset) SetContent(content []byte) error {
-	r.Content = content
+func (a *asset) SetContent(content []byte) error {
+	a.Content = content
 	return nil
 }
 
-func (r *asset) BeforeSave() {
-	// noting to do
+func (a *asset) LogId() string {
+	return a.GetURL()
 }
 
 func hasher(s string) string {

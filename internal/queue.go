@@ -34,7 +34,8 @@ func (q *DownloadableQueue) Push(d Downloadable) bool {
 		return false
 	}
 
-	//var _ Downloadable = (*CssFile)(nil)
+	// @idiomatic: compile time type checking
+	// var _ Downloadable = (*CssFile)(nil)
 
 	switch d.(type) {
 	case *Page:
@@ -45,6 +46,7 @@ func (q *DownloadableQueue) Push(d Downloadable) bool {
 
 	q.seen[url] = struct{}{}
 
+	// block pushing, should we push to buffer and use goroutine to publicate?
 	q.outCh <- d
 
 	return true
@@ -63,6 +65,7 @@ func (q *DownloadableQueue) Ack(d Downloadable) Downloadable {
 		delete(q.assets, url)
 	}
 
+	// always?
 	if len(q.pages) == 0 {
 		close(q.outCh)
 	}
