@@ -176,7 +176,6 @@ func parseStage(ctx context.Context, inCh <-chan internal.Queable, queue *intern
 				case <-ctx.Done():
 					return
 				case item, ok := <-inCh:
-
 					if !ok {
 						return
 					}
@@ -193,6 +192,11 @@ func parseStage(ctx context.Context, inCh <-chan internal.Queable, queue *intern
 
 						logger.Debug(fmt.Sprintf("Item '%s' parsed, found child items %d", logId, len(parsable.GetChildren())))
 
+						// Backpressure-deadlock — это дедлок, вызванный тем, что каналы переполнены (backpressure),
+						// а стадии pipeline блокируются на записи друг в друга, создавая цикл ожидания.
+						// Мы напихали assets в Queue.outCh, и теперь заблокируемся на очередном элементе.
+						// А этот очередной элемент не сможем протолкнуть дальше, потому мы заблокировали pipeline имменно
+						// при проталкивании :)
 						for _, child := range parsable.GetChildren() {
 							queue.Push(child)
 						}

@@ -76,8 +76,6 @@ func (q *Queue) Push(item Queable) bool {
 	// (способ через отдельную goroutine тоже сложен)
 	q.outCh <- item
 
-	// fmt.Println("out", len(q.outCh), "pages", q.pagesDoneCnt)
-
 	return true
 }
 

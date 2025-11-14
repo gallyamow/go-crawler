@@ -25,8 +25,8 @@ func LoadConfig() (*Config, error) {
 	config := &Config{}
 
 	// Set defaults
-	config.MaxCount = getEnvInt("CRAWLER_MAX_COUNT", 10)
-	config.MaxConcurrent = getEnvInt("CRAWLER_MAX_CONCURRENT", 10)
+	config.MaxCount = getEnvInt("CRAWLER_MAX_COUNT", 5)
+	config.MaxConcurrent = getEnvInt("CRAWLER_MAX_CONCURRENT", 3)
 	config.StartURL = getEnvString("CRAWLER_START_URL", "https://go.dev/learn/")
 	config.Timeout = getEnvDuration("CRAWLER_TIMEOUT", 30*time.Second)
 	config.RetryAttempts = getEnvInt("CRAWLER_RETRY_ATTEMPTS", 3)
