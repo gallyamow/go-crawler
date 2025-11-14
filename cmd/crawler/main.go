@@ -56,20 +56,29 @@ func main() {
 		},
 	}
 
-	queue := internal.NewQueue(config.MaxCount, config.MaxConcurrent, logger)
+	// Размеры буферов будем рассчитывать на этой основе
+	maxConcurrent := config.MaxConcurrent
+
+	queue := internal.NewQueue(config.MaxCount, maxConcurrent*2, logger)
 
 	// building pipeline
-	// should move stages to internal.Queue after renaming internal.QueueManager
+	// @idiomatic: используем буферизированные каналы разных размеров и разное кол-во workers, чтобы регулировать
+	// back pressure.
+	// На практике bufferSize = workersCnt - часто недостаточно. Обычно используют x2, x4 - ПЕРЕД медленным.
+	// Это позволяет стадиям до медленного, выполнять свою работу, а не ждать.
+	// В медленном stage, если он IO-bound, то можно увеличить concurrency.
 	resCh := saveStage(
 		ctx,
 		parseStage(
 			ctx,
 			downloadStage(
 				ctx,
-				queue.Out(), config, httpPool, logger,
+				queue.Out(), maxConcurrent, maxConcurrent*2, config, httpPool, logger,
 			),
+			maxConcurrent, maxConcurrent*2,
 			queue, config, logger,
 		),
+		maxConcurrent, maxConcurrent*2,
 		config,
 		logger,
 	)
@@ -101,15 +110,13 @@ func main() {
 	)
 }
 
-func downloadStage(ctx context.Context, inCh <-chan internal.Queable, config *internal.Config, httpClientPool *sync.Pool, logger *slog.Logger) chan internal.Queable {
-	// @idiomatic: используем буферизированные каналы, чтобы сгладить отличающуюся скорость каждой стадий
-	// (например download -долгий, parse - быстрый)
-	outCh := make(chan internal.Queable, config.MaxConcurrent)
+func downloadStage(ctx context.Context, inCh <-chan internal.Queable, workersCnt int, bufferSize int, config *internal.Config, httpClientPool *sync.Pool, logger *slog.Logger) chan internal.Queable {
+	outCh := make(chan internal.Queable, bufferSize)
 
 	var wg sync.WaitGroup
-	wg.Add(config.MaxConcurrent)
+	wg.Add(workersCnt)
 
-	for range config.MaxConcurrent {
+	for range workersCnt {
 		go func() {
 			defer wg.Done()
 
@@ -160,14 +167,14 @@ func downloadStage(ctx context.Context, inCh <-chan internal.Queable, config *in
 	return outCh
 }
 
-func parseStage(ctx context.Context, inCh <-chan internal.Queable, queue *internal.Queue, config *internal.Config, logger *slog.Logger) chan internal.Queable {
-	outCh := make(chan internal.Queable, config.MaxConcurrent)
+func parseStage(ctx context.Context, inCh <-chan internal.Queable, workersCnt int, bufferSize int, queue *internal.Queue, config *internal.Config, logger *slog.Logger) chan internal.Queable {
+	outCh := make(chan internal.Queable, bufferSize)
 
 	var wg sync.WaitGroup
-	wg.Add(config.MaxConcurrent)
+	wg.Add(workersCnt)
 
 	// concurrently parsing
-	for range config.MaxConcurrent {
+	for range workersCnt {
 		go func() {
 			defer wg.Done()
 
@@ -192,11 +199,12 @@ func parseStage(ctx context.Context, inCh <-chan internal.Queable, queue *intern
 
 						logger.Debug(fmt.Sprintf("Item '%s' parsed, found child items %d", logId, len(parsable.GetChildren())))
 
-						// Backpressure-deadlock — это дедлок, вызванный тем, что каналы переполнены (backpressure),
-						// а стадии pipeline блокируются на записи друг в друга, создавая цикл ожидания.
-						// Мы напихали assets в Queue.outCh, и теперь заблокируемся на очередном элементе.
-						// А этот очередной элемент не сможем протолкнуть дальше, потому мы заблокировали pipeline имменно
-						// при проталкивании :)
+						// Мы напихали children в буфер Queue.outCh и теперь застрянем на проталкивании очередного элемента туда
+						// Место в буфере Queue.outCh не освобождается, потому что, никто не читает далее этого ParseStage.
+						//
+						// Запись assets внутри goroutine вроде бы должно помочь, но это плохо работает с закрытием
+						// канала в Ack, мы можем закрыть его до того как все записано.
+						// Другой минус - неконтролируемый рост числа goroutines.
 						for _, child := range parsable.GetChildren() {
 							queue.Push(child)
 						}
@@ -222,13 +230,14 @@ func parseStage(ctx context.Context, inCh <-chan internal.Queable, queue *intern
 	return outCh
 }
 
-func saveStage(ctx context.Context, inCh <-chan internal.Queable, config *internal.Config, logger *slog.Logger) chan internal.Queable {
-	outCh := make(chan internal.Queable, config.MaxConcurrent)
+func saveStage(ctx context.Context, inCh <-chan internal.Queable, workersCnt int, bufferSize int, config *internal.Config, logger *slog.Logger) chan internal.Queable {
+	// disk ops too slow, maybe we need more workers?
+	outCh := make(chan internal.Queable, bufferSize)
 
 	var wg sync.WaitGroup
-	wg.Add(config.MaxConcurrent)
+	wg.Add(workersCnt)
 
-	for range config.MaxConcurrent {
+	for range workersCnt {
 		go func() {
 			defer wg.Done()
 
@@ -288,6 +297,8 @@ func downloadItem(ctx context.Context, item internal.Downloadable, httpClientPoo
 	if err != nil {
 		return err
 	}
+
+	// todo: check file size before downloading if can
 
 	err = item.SetContent(content)
 	if err != nil {
