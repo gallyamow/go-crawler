@@ -18,7 +18,7 @@ type Queue struct {
 }
 
 func NewQueue(pagesLimit int, bufferSize int, logger *slog.Logger) *Queue {
-	return &Queue{
+	q := &Queue{
 		pages:      make(map[string]Queable),
 		assets:     make(map[string]Queable),
 		seen:       make(map[string]struct{}),
@@ -26,17 +26,30 @@ func NewQueue(pagesLimit int, bufferSize int, logger *slog.Logger) *Queue {
 		logger:     logger,
 		pagesLimit: pagesLimit,
 	}
+
+	//go func() {
+	//	for {
+	//		for _, a := range q.assets {
+	//			q.outCh <- a
+	//		}
+	//		for _, p := range q.pages {
+	//			q.outCh <- p
+	//		}
+	//	}
+	//}()
+
+	return q
 }
 
 func (q *Queue) Out() <-chan Queable {
 	return q.outCh
 }
 
-func (q *Queue) Push(d Queable) bool {
+func (q *Queue) Push(item Queable) bool {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 
-	itemId := d.ItemId()
+	itemId := item.ItemId()
 	if _, ok := q.seen[itemId]; ok {
 		return false
 	}
@@ -44,23 +57,24 @@ func (q *Queue) Push(d Queable) bool {
 	// @idiomatic: compile time type checking
 	// var _ Downloadable = (*CssFile)(nil)
 
-	switch d.(type) {
+	switch item.(type) {
 	case *Page:
 		// limit exceeded
 		if q.pagesDoneCnt >= q.pagesLimit {
 			return false
 		}
 
-		q.pages[itemId] = d
+		q.pages[itemId] = item
 		q.pagesDoneCnt++
 	default:
-		q.assets[itemId] = d
+		q.assets[itemId] = item
 	}
 
 	q.seen[itemId] = struct{}{}
 
-	// blocks pushing, should we push to buffer and use goroutine to write to channel?
-	q.outCh <- d
+	// no writes to q.outCh because of mutex twice locking (mutex + channel)
+	// (способ через отдельную goroutine тоже сложен)
+	q.outCh <- item
 
 	// fmt.Println("out", len(q.outCh), "pages", q.pagesDoneCnt)
 
