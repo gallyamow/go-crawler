@@ -82,7 +82,7 @@ func main() {
 	var pagesCnt, assetsCnt = 0, 0
 
 	for item := range resCh {
-		logId := item.(internal.Identifiable).ItemId()
+		logId := item.(internal.Queable).ItemId()
 		queue.Ack(item)
 
 		switch item.(type) {
@@ -101,10 +101,10 @@ func main() {
 	)
 }
 
-func downloadStage(ctx context.Context, inCh <-chan internal.Identifiable, config *internal.Config, httpClientPool *sync.Pool, logger *slog.Logger) chan internal.Identifiable {
+func downloadStage(ctx context.Context, inCh <-chan internal.Queable, config *internal.Config, httpClientPool *sync.Pool, logger *slog.Logger) chan internal.Queable {
 	// @idiomatic: используем буферизированные каналы, чтобы сгладить отличающуюся скорость каждой стадий
 	// (например download -долгий, parse - быстрый)
-	outCh := make(chan internal.Identifiable, config.MaxConcurrent)
+	outCh := make(chan internal.Queable, config.MaxConcurrent)
 
 	var wg sync.WaitGroup
 	wg.Add(config.MaxConcurrent)
@@ -122,7 +122,7 @@ func downloadStage(ctx context.Context, inCh <-chan internal.Identifiable, confi
 						return
 					}
 
-					logId := item.(internal.Identifiable).ItemId()
+					logId := item.(internal.Queable).ItemId()
 					logger.Debug(fmt.Sprintf("Item '%s' received by the 'download' stage", logId))
 
 					downloadableItem := item.(internal.Downloadable)
@@ -160,8 +160,8 @@ func downloadStage(ctx context.Context, inCh <-chan internal.Identifiable, confi
 	return outCh
 }
 
-func parseStage(ctx context.Context, inCh <-chan internal.Identifiable, queue *internal.Queue, config *internal.Config, logger *slog.Logger) chan internal.Identifiable {
-	outCh := make(chan internal.Identifiable, config.MaxConcurrent)
+func parseStage(ctx context.Context, inCh <-chan internal.Queable, queue *internal.Queue, config *internal.Config, logger *slog.Logger) chan internal.Queable {
+	outCh := make(chan internal.Queable, config.MaxConcurrent)
 
 	var wg sync.WaitGroup
 	wg.Add(config.MaxConcurrent)
@@ -181,7 +181,7 @@ func parseStage(ctx context.Context, inCh <-chan internal.Identifiable, queue *i
 						return
 					}
 
-					logId := item.(internal.Identifiable).ItemId()
+					logId := item.(internal.Queable).ItemId()
 					logger.Debug(fmt.Sprintf("Item '%s' received by the 'parse' stage", logId))
 
 					if parsable, ok := item.(internal.Parsable); ok {
@@ -218,8 +218,8 @@ func parseStage(ctx context.Context, inCh <-chan internal.Identifiable, queue *i
 	return outCh
 }
 
-func saveStage(ctx context.Context, inCh <-chan internal.Identifiable, config *internal.Config, logger *slog.Logger) chan internal.Identifiable {
-	outCh := make(chan internal.Identifiable, config.MaxConcurrent)
+func saveStage(ctx context.Context, inCh <-chan internal.Queable, config *internal.Config, logger *slog.Logger) chan internal.Queable {
+	outCh := make(chan internal.Queable, config.MaxConcurrent)
 
 	var wg sync.WaitGroup
 	wg.Add(config.MaxConcurrent)
@@ -237,7 +237,7 @@ func saveStage(ctx context.Context, inCh <-chan internal.Identifiable, config *i
 						return
 					}
 
-					logId := item.(internal.Identifiable).ItemId()
+					logId := item.(internal.Queable).ItemId()
 					logger.Debug(fmt.Sprintf("Item '%s' received by the 'save' stage", logId))
 
 					path, err := retry.Retry[string](ctx, func() (string, error) {
@@ -258,7 +258,7 @@ func saveStage(ctx context.Context, inCh <-chan internal.Identifiable, config *i
 					select {
 					case <-ctx.Done():
 						return
-					case outCh <- item.(internal.Identifiable):
+					case outCh <- item.(internal.Queable):
 						logger.Debug(fmt.Sprintf("Item '%s' transmitted from the 'save' stage to next one.", logId))
 					}
 				}

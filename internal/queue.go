@@ -6,31 +6,33 @@ import (
 )
 
 type Queue struct {
-	pages      map[string]Identifiable
-	assets     map[string]Identifiable
-	seen       map[string]struct{}
-	outCh      chan Identifiable
-	mu         sync.Mutex
-	logger     *slog.Logger
-	pagesLimit int
+	pages        map[string]Queable
+	assets       map[string]Queable
+	seen         map[string]struct{}
+	outCh        chan Queable
+	mu           sync.Mutex
+	logger       *slog.Logger
+	pagesLimit   int
+	pagesDoneCnt int
+	once         sync.Once
 }
 
-func NewQueue(limit int, bufferSize int, logger *slog.Logger) *Queue {
+func NewQueue(pagesLimit int, bufferSize int, logger *slog.Logger) *Queue {
 	return &Queue{
-		pages:      make(map[string]Identifiable),
-		assets:     make(map[string]Identifiable),
+		pages:      make(map[string]Queable),
+		assets:     make(map[string]Queable),
 		seen:       make(map[string]struct{}),
-		outCh:      make(chan Identifiable, bufferSize),
+		outCh:      make(chan Queable, bufferSize),
 		logger:     logger,
-		pagesLimit: limit,
+		pagesLimit: pagesLimit,
 	}
 }
 
-func (q *Queue) Out() <-chan Identifiable {
+func (q *Queue) Out() <-chan Queable {
 	return q.outCh
 }
 
-func (q *Queue) Push(d Identifiable) bool {
+func (q *Queue) Push(d Queable) bool {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 
@@ -44,11 +46,13 @@ func (q *Queue) Push(d Identifiable) bool {
 
 	switch d.(type) {
 	case *Page:
-		if q.pagesLimit <= 0 {
+		// limit exceeded
+		if q.pagesDoneCnt >= q.pagesLimit {
 			return false
 		}
+
 		q.pages[itemId] = d
-		q.pagesLimit--
+		q.pagesDoneCnt++
 	default:
 		q.assets[itemId] = d
 	}
@@ -58,10 +62,12 @@ func (q *Queue) Push(d Identifiable) bool {
 	// blocks pushing, should we push to buffer and use goroutine to write to channel?
 	q.outCh <- d
 
+	// fmt.Println("out", len(q.outCh), "pages", q.pagesDoneCnt)
+
 	return true
 }
 
-func (q *Queue) Ack(d Identifiable) {
+func (q *Queue) Ack(d Queable) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 
@@ -79,8 +85,7 @@ func (q *Queue) Ack(d Identifiable) {
 	// it doesn't look like robust way
 	// (is it valid way to check if we should stop?)
 	if len(q.pages) == 0 {
-		var once sync.Once
-		once.Do(func() {
+		q.once.Do(func() {
 			q.logger.Debug("Pages queue is empty")
 			close(q.outCh)
 		})

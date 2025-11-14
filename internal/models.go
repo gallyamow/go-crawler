@@ -12,7 +12,7 @@ import (
 	"strings"
 )
 
-type Identifiable interface {
+type Queable interface {
 	ItemId() string
 }
 
@@ -33,7 +33,7 @@ type Downloadable interface {
 
 type Parsable interface {
 	Parse() error
-	GetChildren() []Identifiable
+	GetChildren() []Queable
 }
 
 type Page struct {
@@ -107,8 +107,8 @@ func (p *Page) Parse() error {
 	return nil
 }
 
-func (p *Page) GetChildren() []Identifiable {
-	var res []Identifiable
+func (p *Page) GetChildren() []Queable {
+	var res []Queable
 
 	// @idiomatic: interface slice conversion
 	// (append(res, p.Links...) -  нельзя, срезы разных типов — несовместимы, нужно преобразовать вручную)
