@@ -6,43 +6,35 @@ import (
 )
 
 type Queue struct {
-	pages        map[string]Queable
-	assets       map[string]Queable
-	seen         map[string]struct{}
-	outCh        chan Queable
-	mu           sync.Mutex
-	logger       *slog.Logger
-	pagesLimit   int
-	pagesDoneCnt int
-	once         sync.Once
+	seen             map[string]struct{}
+	pagesCh          chan Queable
+	assetsCh         chan Queable
+	mu               sync.Mutex
+	logger           *slog.Logger
+	pagesLimit       int
+	totalQueuedPages int
+	pendingAckPages  int
+	once             sync.Once
 }
 
 func NewQueue(pagesLimit int, bufferSize int, logger *slog.Logger) *Queue {
 	q := &Queue{
-		pages:      make(map[string]Queable),
-		assets:     make(map[string]Queable),
 		seen:       make(map[string]struct{}),
-		outCh:      make(chan Queable, bufferSize),
+		pagesCh:    make(chan Queable, bufferSize),
+		assetsCh:   make(chan Queable, bufferSize),
 		logger:     logger,
 		pagesLimit: pagesLimit,
 	}
 
-	//go func() {
-	//	for {
-	//		for _, a := range q.assets {
-	//			q.outCh <- a
-	//		}
-	//		for _, p := range q.pages {
-	//			q.outCh <- p
-	//		}
-	//	}
-	//}()
-
 	return q
 }
 
-func (q *Queue) Out() <-chan Queable {
-	return q.outCh
+func (q *Queue) Pages() <-chan Queable {
+	return q.pagesCh
+}
+
+func (q *Queue) Assets() <-chan Queable {
+	return q.assetsCh
 }
 
 func (q *Queue) Push(item Queable) bool {
@@ -59,47 +51,40 @@ func (q *Queue) Push(item Queable) bool {
 
 	switch item.(type) {
 	case *Page:
-		// limit exceeded
-		if q.pagesDoneCnt >= q.pagesLimit {
+		// checking total limits
+		if q.totalQueuedPages >= q.pagesLimit {
 			return false
 		}
 
-		q.pages[itemId] = item
-		q.pagesDoneCnt++
+		q.totalQueuedPages++
+		q.pendingAckPages++
+
+		q.pagesCh <- item
 	default:
-		q.assets[itemId] = item
+		// assets
+		q.assetsCh <- item
 	}
 
 	q.seen[itemId] = struct{}{}
 
-	// no writes to q.outCh because of mutex twice locking (mutex + channel)
-	// (способ через отдельную goroutine тоже сложен)
-	q.outCh <- item
-
 	return true
 }
 
-func (q *Queue) Ack(d Queable) {
+func (q *Queue) Ack(item Queable) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 
-	itemId := d.ItemId()
+	if _, ok := item.(*Page); ok {
+		q.pendingAckPages--
 
-	switch d.(type) {
-	case *Page:
-		delete(q.pages, itemId)
 		// it doesn't look like robust way
 		// (is it valid way to check if we should stop?)
-	default:
-		delete(q.assets, itemId)
-	}
-
-	// it doesn't look like robust way
-	// (is it valid way to check if we should stop?)
-	if len(q.pages) == 0 {
-		q.once.Do(func() {
-			q.logger.Debug("Pages queue is empty")
-			close(q.outCh)
-		})
+		// (способ через отдельную writing-goroutine тоже сложен)
+		if q.pendingAckPages == 0 {
+			q.once.Do(func() {
+				close(q.pagesCh)
+				q.logger.Debug("Pages queue closed")
+			})
+		}
 	}
 }
