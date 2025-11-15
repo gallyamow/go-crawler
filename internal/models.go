@@ -12,8 +12,9 @@ import (
 	"strings"
 )
 
-type Queable interface {
+type Queueable interface {
 	ItemId() string
+	SetSkipped(onStage string)
 }
 
 type Transformable interface {
@@ -33,15 +34,16 @@ type Downloadable interface {
 
 type Parsable interface {
 	Parse() error
-	GetChildren() []Queable
+	GetChildren() []Queueable
 }
 
 type Page struct {
-	URL      *urllib.URL
-	HTMLNode *html.Node
-	Content  []byte
-	Links    []*Link
-	Assets   []*asset
+	URL       *urllib.URL
+	HTMLNode  *html.Node
+	Content   []byte
+	Links     []*Link
+	Assets    []*asset
+	SkippedOn string
 }
 
 func NewPage(rawURL string) (*Page, error) {
@@ -107,8 +109,8 @@ func (p *Page) Parse() error {
 	return nil
 }
 
-func (p *Page) GetChildren() []Queable {
-	var res []Queable
+func (p *Page) GetChildren() []Queueable {
+	var res []Queueable
 
 	// @idiomatic: interface slice conversion
 	// (append(res, p.Links...) -  нельзя, срезы разных типов — несовместимы, нужно преобразовать вручную)
@@ -132,6 +134,10 @@ func (p *Page) ItemId() string {
 	return p.GetURL()
 }
 
+func (p *Page) SetSkipped(stage string) {
+	p.SkippedOn = stage
+}
+
 type Link struct {
 	URL      *urllib.URL
 	HTMLNode *html.Node
@@ -151,6 +157,7 @@ type asset struct {
 	sourceURL *urllib.URL
 	HTMLNode  *html.Node
 	Content   []byte
+	SkippedOn string
 }
 
 func (a *asset) GetURL() string {
@@ -176,6 +183,10 @@ func (a *asset) SetContent(content []byte) error {
 
 func (a *asset) ItemId() string {
 	return a.GetURL()
+}
+
+func (a *asset) SetSkipped(stage string) {
+	a.SkippedOn = stage
 }
 
 func hasher(s string) string {

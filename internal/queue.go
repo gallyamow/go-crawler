@@ -1,14 +1,15 @@
 package internal
 
 import (
+	"fmt"
 	"log/slog"
 	"sync"
 )
 
 type Queue struct {
 	seen             map[string]struct{}
-	pagesCh          chan Queable
-	assetsCh         chan Queable
+	pagesCh          chan Queueable
+	assetsCh         chan Queueable
 	mu               sync.Mutex
 	logger           *slog.Logger
 	pagesLimit       int
@@ -20,8 +21,8 @@ type Queue struct {
 func NewQueue(pagesLimit int, bufferSize int, logger *slog.Logger) *Queue {
 	q := &Queue{
 		seen:       make(map[string]struct{}),
-		pagesCh:    make(chan Queable, bufferSize),
-		assetsCh:   make(chan Queable, bufferSize),
+		pagesCh:    make(chan Queueable, bufferSize),
+		assetsCh:   make(chan Queueable, bufferSize),
 		logger:     logger,
 		pagesLimit: pagesLimit,
 	}
@@ -29,15 +30,15 @@ func NewQueue(pagesLimit int, bufferSize int, logger *slog.Logger) *Queue {
 	return q
 }
 
-func (q *Queue) Pages() <-chan Queable {
+func (q *Queue) Pages() <-chan Queueable {
 	return q.pagesCh
 }
 
-func (q *Queue) Assets() <-chan Queable {
+func (q *Queue) Assets() <-chan Queueable {
 	return q.assetsCh
 }
 
-func (q *Queue) Push(item Queable) bool {
+func (q *Queue) Push(item Queueable) bool {
 	// @idiomatic: deadlock due to holding a mutex while performing a potentially blocking operation
 	// (избавился от этой проблемы: использование здесь mutex приводит к тому что он остается захваченным до отправки в pagesCh или assetsCh)
 
@@ -72,11 +73,12 @@ func (q *Queue) Push(item Queable) bool {
 	return true
 }
 
-func (q *Queue) Ack(item Queable) {
+func (q *Queue) Ack(item Queueable) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 
 	q.pendingAckCount--
+	fmt.Println(q.pendingAckCount)
 
 	// (it doesn't look like robust way)
 	// (is it valid way to check if we should stop?)
@@ -89,7 +91,7 @@ func (q *Queue) Ack(item Queable) {
 	}
 }
 
-func (q *Queue) commitAsSeen(item Queable) bool {
+func (q *Queue) commitAsSeen(item Queueable) bool {
 	// использование здесь mutex приводит к тому что он остается захваченным до отправки в pagesCh или assetsCh
 	q.mu.Lock()
 	defer q.mu.Unlock()

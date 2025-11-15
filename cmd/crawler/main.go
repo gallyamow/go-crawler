@@ -24,8 +24,8 @@ func main() {
 	}
 
 	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{
-		Level: config.SlogValue(),
-		//Level: slog.LevelDebug,
+		//Level: config.SlogValue(),
+		Level: slog.LevelDebug,
 	}))
 
 	// @idiomatic: graceful shutdown (modern way)
@@ -112,7 +112,7 @@ func main() {
 			logger.Info(fmt.Sprintf("Done for page %d of %d", pagesCnt, config.MaxCount))
 		default:
 			assetsCnt++
-			logId := item.(internal.Queable).ItemId()
+			logId := item.(internal.Queueable).ItemId()
 			queue.Ack(item)
 
 			logger.Info(fmt.Sprintf("Done '%s'", logId))
@@ -125,8 +125,8 @@ func main() {
 	)
 }
 
-func downloadStage(ctx context.Context, inCh <-chan internal.Queable, workersCnt int, bufferSize int, config *internal.Config, httpClientPool *sync.Pool, logger *slog.Logger) chan internal.Queable {
-	outCh := make(chan internal.Queable, bufferSize)
+func downloadStage(ctx context.Context, inCh <-chan internal.Queueable, workersCnt int, bufferSize int, config *internal.Config, httpClientPool *sync.Pool, logger *slog.Logger) chan internal.Queueable {
+	outCh := make(chan internal.Queueable, bufferSize)
 
 	var wg sync.WaitGroup
 	wg.Add(workersCnt)
@@ -144,7 +144,7 @@ func downloadStage(ctx context.Context, inCh <-chan internal.Queable, workersCnt
 						return
 					}
 
-					logId := item.(internal.Queable).ItemId()
+					logId := item.(internal.Queueable).ItemId()
 					logger.Debug(fmt.Sprintf("Item '%s' received by the 'download' stage", logId))
 
 					downloadableItem := item.(internal.Downloadable)
@@ -158,10 +158,10 @@ func downloadStage(ctx context.Context, inCh <-chan internal.Queable, workersCnt
 
 					if err != nil {
 						logger.Debug(fmt.Sprintf("Item '%s' downloading skipped, after %d attempts, with error %v.", logId, config.RetryAttempts, err))
-						continue
+						item.SetSkipped("download")
+					} else {
+						logger.Debug(fmt.Sprintf("Item '%s' downloaded, size %d bytes.", logId, size))
 					}
-
-					logger.Debug(fmt.Sprintf("Item '%s' downloaded, size %d bytes.", logId, size))
 
 					select {
 					case <-ctx.Done():
@@ -182,8 +182,8 @@ func downloadStage(ctx context.Context, inCh <-chan internal.Queable, workersCnt
 	return outCh
 }
 
-func parseStage(ctx context.Context, inCh <-chan internal.Queable, workersCnt int, bufferSize int, queue *internal.Queue, config *internal.Config, logger *slog.Logger) chan internal.Queable {
-	outCh := make(chan internal.Queable, bufferSize)
+func parseStage(ctx context.Context, inCh <-chan internal.Queueable, workersCnt int, bufferSize int, queue *internal.Queue, config *internal.Config, logger *slog.Logger) chan internal.Queueable {
+	outCh := make(chan internal.Queueable, bufferSize)
 
 	var wg sync.WaitGroup
 	wg.Add(workersCnt)
@@ -202,17 +202,17 @@ func parseStage(ctx context.Context, inCh <-chan internal.Queable, workersCnt in
 						return
 					}
 
-					logId := item.(internal.Queable).ItemId()
+					logId := item.(internal.Queueable).ItemId()
 					logger.Debug(fmt.Sprintf("Item '%s' received by the 'parse' stage", logId))
 
 					if parsable, ok := item.(internal.Parsable); ok {
 						err := parsable.Parse()
 						if err != nil {
 							logger.Debug(fmt.Sprintf("Item '%s' parsing skipped, with error %v.", logId, err))
-							continue
+							item.SetSkipped("save")
+						} else {
+							logger.Debug(fmt.Sprintf("Item '%s' parsed, found child items %d", logId, len(parsable.GetChildren())))
 						}
-
-						logger.Debug(fmt.Sprintf("Item '%s' parsed, found child items %d", logId, len(parsable.GetChildren())))
 
 						// Мы напихали children в буфер Queue.outCh и теперь застрянем на проталкивании очередного элемента туда
 						// Место в буфере Queue.outCh не освобождается, потому что, никто не читает далее этого ParseStage.
@@ -245,9 +245,9 @@ func parseStage(ctx context.Context, inCh <-chan internal.Queable, workersCnt in
 	return outCh
 }
 
-func saveStage(ctx context.Context, inCh <-chan internal.Queable, workersCnt int, bufferSize int, config *internal.Config, logger *slog.Logger) chan internal.Queable {
+func saveStage(ctx context.Context, inCh <-chan internal.Queueable, workersCnt int, bufferSize int, config *internal.Config, logger *slog.Logger) chan internal.Queueable {
 	// disk ops too slow, maybe we need more workers?
-	outCh := make(chan internal.Queable, bufferSize)
+	outCh := make(chan internal.Queueable, bufferSize)
 
 	var wg sync.WaitGroup
 	wg.Add(workersCnt)
@@ -265,7 +265,7 @@ func saveStage(ctx context.Context, inCh <-chan internal.Queable, workersCnt int
 						return
 					}
 
-					logId := item.(internal.Queable).ItemId()
+					logId := item.(internal.Queueable).ItemId()
 					logger.Debug(fmt.Sprintf("Item '%s' received by the 'save' stage", logId))
 
 					path, err := retry.Retry[string](ctx, func() (string, error) {
@@ -278,15 +278,15 @@ func saveStage(ctx context.Context, inCh <-chan internal.Queable, workersCnt int
 
 					if err != nil {
 						logger.Debug(fmt.Sprintf("Item '%s' saving skipped, after %d attempts, with error %v.", logId, config.RetryAttempts, err))
-						continue
+						item.SetSkipped("save")
+					} else {
+						logger.Debug(fmt.Sprintf("Item '%s' saved to '%s'.", logId, path))
 					}
-
-					logger.Debug(fmt.Sprintf("Item '%s' saved to '%s'.", logId, path))
 
 					select {
 					case <-ctx.Done():
 						return
-					case outCh <- item.(internal.Queable):
+					case outCh <- item.(internal.Queueable):
 						logger.Debug(fmt.Sprintf("Item '%s' transmitted from the 'save' stage to next one.", logId))
 					}
 				}
