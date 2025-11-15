@@ -1,7 +1,6 @@
 package internal
 
 import (
-	"fmt"
 	"log/slog"
 	"sync"
 )
@@ -78,7 +77,6 @@ func (q *Queue) Ack(item Queueable) {
 	defer q.mu.Unlock()
 
 	q.pendingAckCount--
-	fmt.Println(q.pendingAckCount)
 
 	// (it doesn't look like robust way)
 	// (is it valid way to check if we should stop?)

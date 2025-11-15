@@ -17,23 +17,27 @@ A minimalistic, concurrent web crawler written in Go.
 go run cmd/crawler/main.go \
   --max-count 200 \
   --max-concurrent 20 \
-  --start-url "https://example.com" \
+  --start-url "https://go.dev/learn/" \
   --timeout 60s \
-  --output-dir "./output"
+  --output-dir "./tmp"
+```
+
+```shell
+./crawler --max-count 200 --max-concurrent 20 --start-url "https://go.dev/learn/" --output-dir "./.tmp"
 ```
 
 ## Options
 
-| Flag               | Environment Variable     | Default               | Description                |
-|--------------------|--------------------------|-----------------------|----------------------------|
-| `--max-count`      | `CRAWLER_MAX_COUNT`      | 100                   | Maximum pages to crawl     |
-| `--max-concurrent` | `CRAWLER_MAX_CONCURRENT` | 10                    | Maximum concurrent workers |
-| `--start-url`      | `CRAWLER_START_URL`      | https://go.dev/learn/ | Starting URL               |
-| `--timeout`        | `CRAWLER_TIMEOUT`        | 30s                   | HTTP request timeout       |
-| `--retry-attempts` | `CRAWLER_RETRY_ATTEMPTS` | 3                     | Number of retry attempts   |
-| `--retry-delay`    | `CRAWLER_RETRY_DELAY`    | 1s                    | Delay between retries      |
-| `--output-dir`     | `CRAWLER_OUTPUT_DIR`     | ./.tmp/               | Output directory           |
-| `--log-level`      | `CRAWLER_LOG_LEVEL`      | info                  | Log level                  |
+| Flag               | Environment Variable     | Default | Description                |
+|--------------------|--------------------------|---------|----------------------------|
+| `--max-count`      | `CRAWLER_MAX_COUNT`      | 100     | Maximum pages to crawl     |
+| `--max-concurrent` | `CRAWLER_MAX_CONCURRENT` | 10      | Maximum concurrent workers |
+| `--start-url`      | `CRAWLER_START_URL`      | ""      | Starting URL               |
+| `--timeout`        | `CRAWLER_TIMEOUT`        | 30s     | HTTP request timeout       |
+| `--retry-attempts` | `CRAWLER_RETRY_ATTEMPTS` | 3       | Number of retry attempts   |
+| `--retry-delay`    | `CRAWLER_RETRY_DELAY`    | 1s      | Delay between retries      |
+| `--output-dir`     | `CRAWLER_OUTPUT_DIR`     | ./.tmp/ | Output directory           |
+| `--log-level`      | `CRAWLER_LOG_LEVEL`      | info    | Log level                  |
 
 ## Future Enhancements
 

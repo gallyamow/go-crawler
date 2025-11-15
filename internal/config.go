@@ -25,8 +25,8 @@ func LoadConfig() (*Config, error) {
 	config := &Config{}
 
 	// Set defaults
-	config.MaxCount = getEnvInt("CRAWLER_MAX_COUNT", 40)
-	config.MaxConcurrent = getEnvInt("CRAWLER_MAX_CONCURRENT", 8)
+	config.MaxCount = getEnvInt("CRAWLER_MAX_COUNT", 100)
+	config.MaxConcurrent = getEnvInt("CRAWLER_MAX_CONCURRENT", 10)
 	config.StartURL = getEnvString("CRAWLER_START_URL", "")
 	config.Timeout = getEnvDuration("CRAWLER_TIMEOUT", 30*time.Second)
 	config.RetryAttempts = getEnvInt("CRAWLER_RETRY_ATTEMPTS", 3)
