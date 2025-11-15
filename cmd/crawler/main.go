@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"github.com/gallyamow/go-crawler/internal"
+	"github.com/gallyamow/go-crawler/pkg/fanin"
 	"github.com/gallyamow/go-crawler/pkg/httpclient"
 	"github.com/gallyamow/go-crawler/pkg/retry"
 	"log/slog"
@@ -85,16 +86,11 @@ func main() {
 
 	assetsCh := saveStage(
 		ctx,
-		parseStage(
+		downloadStage(
 			ctx,
-			downloadStage(
-				ctx,
-				queue.Assets(),
-				maxConcurrent, maxConcurrent*2,
-				config, httpPool, logger,
-			),
+			queue.Assets(),
 			maxConcurrent, maxConcurrent*2,
-			queue, config, logger,
+			config, httpPool, logger,
 		),
 		maxConcurrent, maxConcurrent*2,
 		config,
@@ -105,27 +101,18 @@ func main() {
 	queue.Push(startPage)
 
 	var pagesCnt, assetsCnt = 0, 0
-	var pageOk, assetOk = false, false
 
-	// @idiomatic: use condition instead of break
-	for pageOk && assetOk {
-		select {
-		case page, ok := <-pagesCh:
-			if !ok {
-				pageOk = false
-				break // break of select
-			}
+	// @idiomatic: using fan-in to merge channels instead of using for + flags
+	for item := range fanin.Merge(pagesCh, assetsCh) {
+		switch item.(type) {
+		case *internal.Page:
 			pagesCnt++
 			logger.Info(fmt.Sprintf("Done for page %d of %d", pagesCnt, config.MaxCount))
-			queue.Ack(page)
-		case asset, ok := <-assetsCh:
-			if !ok {
-				assetOk = false
-				break // break of select
-			}
+			queue.Ack(item)
+		default:
 			assetsCnt++
-			logId := asset.(internal.Queable).ItemId()
-			queue.Ack(asset)
+			logId := item.(internal.Queable).ItemId()
+			queue.Ack(item)
 			logger.Info(fmt.Sprintf("Done for asset '%s'", logId))
 		}
 	}

@@ -13,7 +13,7 @@ type Queue struct {
 	logger           *slog.Logger
 	pagesLimit       int
 	totalQueuedPages int
-	pendingAckPages  int
+	pendingAckCount  int
 	once             sync.Once
 }
 
@@ -57,14 +57,13 @@ func (q *Queue) Push(item Queable) bool {
 		}
 
 		q.totalQueuedPages++
-		q.pendingAckPages++
-
 		q.pagesCh <- item
 	default:
 		// assets
 		q.assetsCh <- item
 	}
 
+	q.pendingAckCount++
 	q.seen[itemId] = struct{}{}
 
 	return true
@@ -74,17 +73,14 @@ func (q *Queue) Ack(item Queable) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 
-	if _, ok := item.(*Page); ok {
-		q.pendingAckPages--
+	q.pendingAckCount--
 
-		// it doesn't look like robust way
-		// (is it valid way to check if we should stop?)
-		// (способ через отдельную writing-goroutine тоже сложен)
-		if q.pendingAckPages == 0 {
-			q.once.Do(func() {
-				close(q.pagesCh)
-				q.logger.Debug("Pages queue closed")
-			})
-		}
+	// (it doesn't look like robust way)
+	// (is it valid way to check if we should stop?)
+	// (способ через отдельную writing-goroutine тоже сложен)
+	if q.pendingAckCount == 0 {
+		q.once.Do(func() {
+			close(q.pagesCh)
+		})
 	}
 }

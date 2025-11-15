@@ -11,6 +11,8 @@ func Merge[T any](inputChs ...<-chan T) <-chan T {
 
 	for _, inputCh := range inputChs {
 		go func() {
+			defer wg.Done()
+
 			for v := range inputCh {
 				out <- v
 			}
