@@ -61,19 +61,37 @@ func main() {
 
 	queue := internal.NewQueue(config.MaxCount, maxConcurrent*2, logger)
 
-	// building pipeline
-	// @idiomatic: используем буферизированные каналы разных размеров и разное кол-во workers, чтобы регулировать
-	// back pressure.
+	// @idiomatic: используем буферизированные каналы разных размеров и разное кол-во workers, чтобы регулировать back pressure.
 	// На практике bufferSize = workersCnt - часто недостаточно. Обычно используют x2, x4 - ПЕРЕД медленным.
 	// Это позволяет стадиям до медленного, выполнять свою работу, а не ждать.
 	// В медленном stage, если он IO-bound, то можно увеличить concurrency.
-	resCh := saveStage(
+	pagesCh := saveStage(
 		ctx,
 		parseStage(
 			ctx,
 			downloadStage(
 				ctx,
-				queue.Out(), maxConcurrent, maxConcurrent*2, config, httpPool, logger,
+				queue.Pages(),
+				maxConcurrent, maxConcurrent*2,
+				config, httpPool, logger,
+			),
+			maxConcurrent, maxConcurrent*2,
+			queue, config, logger,
+		),
+		maxConcurrent, maxConcurrent*2,
+		config,
+		logger,
+	)
+
+	assetsCh := saveStage(
+		ctx,
+		parseStage(
+			ctx,
+			downloadStage(
+				ctx,
+				queue.Assets(),
+				maxConcurrent, maxConcurrent*2,
+				config, httpPool, logger,
 			),
 			maxConcurrent, maxConcurrent*2,
 			queue, config, logger,
@@ -86,20 +104,28 @@ func main() {
 	startedAt := time.Now()
 	queue.Push(startPage)
 
-	//time.Sleep(time.Second)
-
 	var pagesCnt, assetsCnt = 0, 0
+	var pageOk, assetOk = false, false
 
-	for item := range resCh {
-		logId := item.(internal.Queable).ItemId()
-		queue.Ack(item)
-
-		switch item.(type) {
-		case *internal.Page:
+	// @idiomatic: use condition instead of break
+	for pageOk && assetOk {
+		select {
+		case page, ok := <-pagesCh:
+			if !ok {
+				pageOk = false
+				break // break of select
+			}
 			pagesCnt++
 			logger.Info(fmt.Sprintf("Done for page %d of %d", pagesCnt, config.MaxCount))
-		default:
+			queue.Ack(page)
+		case asset, ok := <-assetsCh:
+			if !ok {
+				assetOk = false
+				break // break of select
+			}
 			assetsCnt++
+			logId := asset.(internal.Queable).ItemId()
+			queue.Ack(asset)
 			logger.Info(fmt.Sprintf("Done for asset '%s'", logId))
 		}
 	}
