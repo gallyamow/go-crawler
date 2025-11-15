@@ -38,11 +38,10 @@ func (q *Queue) Assets() <-chan Queable {
 }
 
 func (q *Queue) Push(item Queable) bool {
-	q.mu.Lock()
-	defer q.mu.Unlock()
+	// @idiomatic: deadlock due to holding a mutex while performing a potentially blocking operation
+	// (избавился от этой проблемы: использование здесь mutex приводит к тому что он остается захваченным до отправки в pagesCh или assetsCh)
 
-	itemId := item.ItemId()
-	if _, ok := q.seen[itemId]; ok {
+	if !q.commitAsSeen(item) {
 		return false
 	}
 
@@ -56,15 +55,19 @@ func (q *Queue) Push(item Queable) bool {
 			return false
 		}
 
+		q.mu.Lock()
 		q.totalQueuedPages++
+		q.mu.Unlock()
+
 		q.pagesCh <- item
 	default:
 		// assets
 		q.assetsCh <- item
 	}
 
+	q.mu.Lock()
 	q.pendingAckCount++
-	q.seen[itemId] = struct{}{}
+	q.mu.Unlock()
 
 	return true
 }
@@ -79,8 +82,23 @@ func (q *Queue) Ack(item Queable) {
 	// (is it valid way to check if we should stop?)
 	// (способ через отдельную writing-goroutine тоже сложен)
 	if q.pendingAckCount == 0 {
-		q.once.Do(func() {
-			close(q.pagesCh)
-		})
+		//q.once.Do(func() { // можно и без sync.
+		close(q.pagesCh)
+		close(q.assetsCh)
+		//})
 	}
+}
+
+func (q *Queue) commitAsSeen(item Queable) bool {
+	// использование здесь mutex приводит к тому что он остается захваченным до отправки в pagesCh или assetsCh
+	q.mu.Lock()
+	defer q.mu.Unlock()
+
+	itemId := item.ItemId()
+	if _, ok := q.seen[itemId]; ok {
+		return false
+	}
+	q.seen[itemId] = struct{}{}
+
+	return true
 }

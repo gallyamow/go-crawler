@@ -1,6 +1,8 @@
 package fanin
 
-import "sync"
+import (
+	"sync"
+)
 
 // Merge простая реализация FanIn паттерна (специально без поддержки контекста).
 func Merge[T any](inputChs ...<-chan T) <-chan T {
@@ -10,13 +12,12 @@ func Merge[T any](inputChs ...<-chan T) <-chan T {
 	wg.Add(len(inputChs))
 
 	for _, inputCh := range inputChs {
-		go func() {
+		go func(ch <-chan T) {
 			defer wg.Done()
-
-			for v := range inputCh {
+			for v := range ch {
 				out <- v
 			}
-		}()
+		}(inputCh)
 	}
 
 	go func() {

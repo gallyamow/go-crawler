@@ -7,9 +7,8 @@ A minimalistic, concurrent web crawler written in Go.
 - **Concurrent Processing**: Configurable number of worker goroutines
 - **Graceful Shutdown**: Proper cleanup and signal handling
 - **Retry Logic**: Exponential backoff with configurable retry attempts
-- **Metrics & Monitoring**: Comprehensive statistics and performance tracking
 - **Configuration Management**: Environment variables and command-line flags
-- **Error Handling**: Robust error handling with detailed logging
+- **Error Handling**: Error handling with detailed logging
 - **Memory Management**: Efficient memory usage with proper cleanup
 
 ## Usage
@@ -40,6 +39,7 @@ go run cmd/crawler/main.go \
 
 - [ ] Distributed crawling support
 - [ ] Advanced filtering and crawling rules (by size, file format)
+- [ ] Metrics & Monitoring: Comprehensive statistics and performance tracking
 
 ## To see
 

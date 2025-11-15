@@ -23,9 +23,9 @@ func main() {
 		os.Exit(1)
 	}
 
-	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
-		//Level: config.SlogValue(),
-		Level: slog.LevelDebug,
+	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{
+		Level: config.SlogValue(),
+		//Level: slog.LevelDebug,
 	}))
 
 	// @idiomatic: graceful shutdown (modern way)
@@ -107,13 +107,15 @@ func main() {
 		switch item.(type) {
 		case *internal.Page:
 			pagesCnt++
-			logger.Info(fmt.Sprintf("Done for page %d of %d", pagesCnt, config.MaxCount))
 			queue.Ack(item)
+
+			logger.Info(fmt.Sprintf("Done for page %d of %d", pagesCnt, config.MaxCount))
 		default:
 			assetsCnt++
 			logId := item.(internal.Queable).ItemId()
 			queue.Ack(item)
-			logger.Info(fmt.Sprintf("Done for asset '%s'", logId))
+
+			logger.Info(fmt.Sprintf("Done '%s'", logId))
 		}
 	}
 
