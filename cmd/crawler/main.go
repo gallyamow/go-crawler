@@ -23,8 +23,6 @@ func main() {
 		os.Exit(1)
 	}
 
-	//config.MaxCount = 5
-
 	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{
 		Level: config.SlogValue(),
 		//Level: slog.LevelDebug,

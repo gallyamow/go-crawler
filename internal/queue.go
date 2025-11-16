@@ -38,10 +38,10 @@ func (q *Queue) Assets() <-chan Queueable {
 	return q.assetsCh
 }
 
+// Push помещает элемент в очередь на обработку.
+// @idiomatic: deadlock due to holding a mutex while performing a potentially blocking operation
+// (избавился от этой проблемы: использование здесь mutex приводит к тому что он остается захваченным до отправки в pagesCh или assetsCh)
 func (q *Queue) Push(ctx context.Context, item Queueable) bool {
-	// @idiomatic: deadlock due to holding a mutex while performing a potentially blocking operation
-	// (избавился от этой проблемы: использование здесь mutex приводит к тому что он остается захваченным до отправки в pagesCh или assetsCh)
-
 	if !q.commitAsSeen(item) {
 		return false
 	}
@@ -54,10 +54,11 @@ func (q *Queue) Push(ctx context.Context, item Queueable) bool {
 	// var _ Downloadable = (*CssFile)(nil)
 
 	if page, ok := item.(*Page); ok {
+		// @idiomatic: early unlock
 		q.mu.Lock()
-		// checking total limits
 		if q.totalQueuedPages >= q.pagesLimit {
 			q.mu.Unlock()
+			// total limits exceed
 			return false
 		}
 		q.totalQueuedPages++
@@ -67,9 +68,6 @@ func (q *Queue) Push(ctx context.Context, item Queueable) bool {
 		case <-ctx.Done():
 			return false
 		case q.pagesCh <- page:
-			q.mu.Lock()
-			q.totalQueuedPages++
-			q.mu.Unlock()
 		}
 	} else {
 		// assets
