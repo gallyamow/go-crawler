@@ -48,7 +48,7 @@ func main() {
 	// Размеры буферов будем рассчитывать на этой основе
 	maxConcurrent := config.MaxConcurrent
 
-	queue := internal.NewQueue(config.MaxCount, maxConcurrent, logger)
+	queue := internal.NewQueue(ctx, config.MaxCount, maxConcurrent, logger)
 
 	// @idiomatic: используем буферизированные каналы разных размеров и разное кол-во workers, чтобы регулировать back pressure.
 	// На практике bufferSize = workersCnt - часто недостаточно. Обычно используют x2, x4 - ПЕРЕД медленным.
@@ -86,7 +86,7 @@ func main() {
 	)
 
 	startedAt := time.Now()
-	queue.Push(ctx, startPage)
+	queue.Push(startPage)
 
 	var pagesCnt, assetsCnt = 0, 0
 
@@ -214,11 +214,16 @@ func parseStage(ctx context.Context, inCh <-chan internal.Queueable, workersCnt 
 							return
 						}
 
+						// Без специальной обработки, добавление в pipeline новых элементов из самого же этого pipeline
+						// - всегда будет блокироваться.
 						// Суть проблемы:
-						// queue -> download -> parse -> save -> done
-						//  +        +           + заполняем буфер queue и блокируемся на добавлении элемента, поэтому и parse.outCh ничего не возвращает
+						// На этой стадии мы добавляем элементы в queue до заполнения его буфера, после этого блокируемся на добавлении очередного child элемента.
+						// Но и не отпускаем pipeline на обработку след. элемента.
+						//
+						// Решение: 1) Вынести в буфер и добавлять его на последней стадии. Но тогда будет просто блокироваться последняя стадия.
+						// Решение: 2) Дать это на управление в queue, добавлять в buffer и queue  в отдельной горутине будет
 						for _, child := range parsable.GetChildren() {
-							queue.Push(ctx, child)
+							queue.Push(child)
 						}
 					}
 

@@ -1,33 +1,77 @@
 package internal
 
 import (
+	"container/list"
 	"context"
 	"log/slog"
 	"sync"
 )
 
 type Queue struct {
+	pending          *list.List
 	seen             map[string]struct{}
 	pagesCh          chan Queueable
 	assetsCh         chan Queueable
 	mu               sync.Mutex
+	cond             *sync.Cond
 	logger           *slog.Logger
 	pagesLimit       int
 	totalQueuedPages int
 	pendingAckCount  int
-	once             sync.Once
 }
 
-func NewQueue(pagesLimit int, bufferSize int, logger *slog.Logger) *Queue {
-	q := &Queue{
+func NewQueue(ctx context.Context, pagesLimit int, chanSize int, logger *slog.Logger) *Queue {
+	queue := &Queue{
+		pending:    list.New(),
 		seen:       make(map[string]struct{}),
-		pagesCh:    make(chan Queueable, bufferSize),
-		assetsCh:   make(chan Queueable, bufferSize),
+		pagesCh:    make(chan Queueable, chanSize),
+		assetsCh:   make(chan Queueable, chanSize),
 		logger:     logger,
 		pagesLimit: pagesLimit,
 	}
 
-	return q
+	queue.cond = sync.NewCond(&queue.mu)
+
+	go func(ctx context.Context, q *Queue) {
+		for {
+			if ctx.Err() != nil {
+				return
+			}
+
+			// @idiomatic: cond instead of busy-wait
+			q.cond.L.Lock()
+			if q.pending.Len() == 0 {
+				q.cond.Wait()
+			}
+			q.cond.L.Unlock()
+
+			// @idiomatic: using container/list
+			for e := q.pending.Front(); e != nil; {
+				if ctx.Err() != nil {
+					return
+				}
+
+				next := e.Next()
+				item := e.Value.(Queueable)
+
+				ch := q.assetsCh
+				if _, ok := item.(*Page); ok {
+					ch = q.pagesCh
+				}
+
+				select {
+				case <-ctx.Done():
+					return
+				case ch <- item:
+					q.pending.Remove(e)
+				}
+
+				e = next
+			}
+		}
+	}(ctx, queue)
+
+	return queue
 }
 
 func (q *Queue) Pages() <-chan Queueable {
@@ -41,42 +85,30 @@ func (q *Queue) Assets() <-chan Queueable {
 // Push помещает элемент в очередь на обработку.
 // @idiomatic: deadlock due to holding a mutex while performing a potentially blocking operation
 // (избавился от этой проблемы: использование здесь mutex приводит к тому что он остается захваченным до отправки в pagesCh или assetsCh)
-func (q *Queue) Push(ctx context.Context, item Queueable) bool {
-	if !q.commitAsSeen(item) {
-		return false
-	}
+func (q *Queue) Push(item Queueable) bool {
+	q.mu.Lock()
+	defer q.mu.Unlock()
 
-	if ctx.Err() != nil {
+	itemId := item.ItemId()
+	if _, ok := q.seen[itemId]; ok {
 		return false
 	}
+	q.seen[itemId] = struct{}{}
 
 	// @idiomatic: compile time type checking
 	// var _ Downloadable = (*CssFile)(nil)
 
-	if page, ok := item.(*Page); ok {
-		// @idiomatic: early unlock
-		q.mu.Lock()
+	if _, ok := item.(*Page); ok {
 		if q.totalQueuedPages >= q.pagesLimit {
-			q.mu.Unlock()
-			// total limits exceed
 			return false
 		}
 		q.totalQueuedPages++
-		q.mu.Unlock()
-
-		select {
-		case <-ctx.Done():
-			return false
-		case q.pagesCh <- page:
-		}
-	} else {
-		// assets
-		q.assetsCh <- item
 	}
 
-	q.mu.Lock()
+	q.pending.PushBack(item)
+	q.cond.Signal()
+
 	q.pendingAckCount++
-	q.mu.Unlock()
 
 	return true
 }
@@ -91,23 +123,7 @@ func (q *Queue) Ack(item Queueable) {
 	// (is it valid way to check if we should stop?)
 	// (способ через отдельную writing-goroutine тоже сложен)
 	if q.pendingAckCount == 0 {
-		//q.once.Do(func() { // можно и без sync.
 		close(q.pagesCh)
 		close(q.assetsCh)
-		//})
 	}
-}
-
-func (q *Queue) commitAsSeen(item Queueable) bool {
-	// использование здесь mutex приводит к тому что он остается захваченным до отправки в pagesCh или assetsCh
-	q.mu.Lock()
-	defer q.mu.Unlock()
-
-	itemId := item.ItemId()
-	if _, ok := q.seen[itemId]; ok {
-		return false
-	}
-	q.seen[itemId] = struct{}{}
-
-	return true
 }
