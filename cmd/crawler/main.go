@@ -17,7 +17,11 @@ import (
 	"time"
 )
 
+var version = "unknown"
+
 func main() {
+	fmt.Printf("go-crawler@%s\n", version)
+
 	config, err := internal.LoadConfig()
 	if err != nil {
 		fmt.Printf("Failed to load configuration %v", err)
