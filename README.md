@@ -44,6 +44,7 @@ go run cmd/crawler/main.go \
 - [ ] Distributed crawling support
 - [ ] Advanced filtering and crawling rules (by size, file format)
 - [ ] Metrics & Monitoring: Comprehensive statistics and performance tracking
+- [ ] Handle redirects
 
 ## To see
 

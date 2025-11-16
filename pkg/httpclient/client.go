@@ -51,7 +51,18 @@ func (c *Client) Get(ctx context.Context, url string) ([]byte, error) {
 		return nil, fmt.Errorf("build request: %w", err)
 	}
 
-	content, err := c.doRequest(ctx, req)
+	resp, err := c.doRequest(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("unexpected status code %d", resp.StatusCode)
+	}
+
+	content, err := io.ReadAll(resp.Body)
+
 	if err != nil {
 		return nil, err
 	}
@@ -59,7 +70,11 @@ func (c *Client) Get(ctx context.Context, url string) ([]byte, error) {
 	return content, nil
 }
 
-func (c *Client) doRequest(ctx context.Context, req *http.Request) ([]byte, error) {
+func (c *Client) Head(ctx context.Context, url string) (*http.Response, error) {
+	return c.client.Head(url)
+}
+
+func (c *Client) doRequest(ctx context.Context, req *http.Request) (*http.Response, error) {
 	req = req.WithContext(ctx)
 
 	resp, err := c.client.Do(req)
@@ -72,13 +87,8 @@ func (c *Client) doRequest(ctx context.Context, req *http.Request) ([]byte, erro
 			return nil, fmt.Errorf("failed to make http request: %w", err)
 		}
 	}
-	defer resp.Body.Close()
 
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("unexpected status code %d", resp.StatusCode)
-	}
-
-	return io.ReadAll(resp.Body)
+	return resp, nil
 }
 
 func (c *Client) getRequest(url string) (*http.Request, error) {

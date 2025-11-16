@@ -12,6 +12,7 @@ import (
 type Config struct {
 	MaxCount      int
 	MaxConcurrent int
+	MaxFileSize   int64
 	URL           string
 	Timeout       time.Duration
 	RetryAttempts int
@@ -33,6 +34,7 @@ func LoadConfig() (*Config, error) {
 	config.RetryDelay = getEnvDuration("CRAWLER_RETRY_DELAY", 1*time.Second)
 	config.OutputDir = getEnvString("CRAWLER_OUTPUT_DIR", "./.tmp/")
 	config.LogLevel = getEnvString("CRAWLER_LOG_LEVEL", "info")
+	config.MaxFileSize = getEnvInt64("CRAWLER_MAX_FILE_SIZE", 64<<20) // 64*2^20=64*1024*1024=64MB
 
 	// Parse command line flags
 	flag.IntVar(&config.MaxCount, "max-count", config.MaxCount, "Maximum number of pages to crawl")
@@ -112,6 +114,15 @@ func getEnvString(key, defaultValue string) string {
 func getEnvInt(key string, defaultValue int) int {
 	if value := os.Getenv(key); value != "" {
 		if intValue, err := strconv.Atoi(value); err == nil {
+			return intValue
+		}
+	}
+	return defaultValue
+}
+
+func getEnvInt64(key string, defaultValue int64) int64 {
+	if value := os.Getenv(key); value != "" {
+		if intValue, err := strconv.ParseInt(value, 10, 64); err == nil {
 			return intValue
 		}
 	}

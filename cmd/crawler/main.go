@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strconv"
 	"sync"
 	"syscall"
 	"time"
@@ -28,24 +29,9 @@ func main() {
 		//Level: slog.LevelDebug,
 	}))
 
-	//debug.EnableDumpGoroutines(5 * time.Second)
-
 	// @idiomatic: graceful shutdown (modern way)
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
-
-	// @idiomatic: graceful shutdown (old way)
-	/*
-		sigChan := make(chan os.Signal, 1)
-		// @idiomatic: pass channel to func than writes to it
-		// (SIGKILL - не обрабатывают, потому что ядро немедленно завершает процесс)
-		signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
-		go func() {
-			<-sigChan
-			logger.Info("Received shutdown signal, stopping crawler...")
-			cancel()
-		}()
-	*/
 
 	startPage, err := internal.NewPage(config.URL)
 	if err != nil {
@@ -62,7 +48,7 @@ func main() {
 	// Размеры буферов будем рассчитывать на этой основе
 	maxConcurrent := config.MaxConcurrent
 
-	queue := internal.NewQueue(config.MaxCount, maxConcurrent*2, logger)
+	queue := internal.NewQueue(config.MaxCount, maxConcurrent, logger)
 
 	// @idiomatic: используем буферизированные каналы разных размеров и разное кол-во workers, чтобы регулировать back pressure.
 	// На практике bufferSize = workersCnt - часто недостаточно. Обычно используют x2, x4 - ПЕРЕД медленным.
@@ -158,7 +144,7 @@ func downloadStage(ctx context.Context, inCh <-chan internal.Queueable, workersC
 
 					downloadableItem := item.(internal.Downloadable)
 					size, err := retry.Retry[int](ctx, func() (int, error) {
-						downloadErr := downloadItem(ctx, downloadableItem, httpClientPool)
+						downloadErr := downloadItem(ctx, downloadableItem, config, httpClientPool)
 						if downloadErr != nil {
 							return 0, downloadErr
 						}
@@ -166,7 +152,7 @@ func downloadStage(ctx context.Context, inCh <-chan internal.Queueable, workersC
 					}, retry.NewConfig(retry.WithMaxAttempts(config.RetryAttempts), retry.WithDelay(config.RetryDelay)))
 
 					if err != nil {
-						logger.Debug(fmt.Sprintf("Item '%s' downloading skipped, after %d attempts, with error %v.", logId, config.RetryAttempts, err))
+						logger.Debug(fmt.Sprintf("Item '%s' downloading skipped, after %d attempts, with error: %v.", logId, config.RetryAttempts, err))
 						item.SetSkipped("download")
 					} else {
 						logger.Debug(fmt.Sprintf("Item '%s' downloaded, size %d bytes.", logId, size))
@@ -217,19 +203,20 @@ func parseStage(ctx context.Context, inCh <-chan internal.Queueable, workersCnt 
 					if parsable, ok := item.(internal.Parsable); ok {
 						err := parsable.Parse()
 						if err != nil {
-							logger.Debug(fmt.Sprintf("Item '%s' parsing skipped, with error %v.", logId, err))
+							logger.Debug(fmt.Sprintf("Item '%s' parsing skipped, with error: %v.", logId, err))
 							item.SetSkipped("parse")
 						} else {
 							logger.Debug(fmt.Sprintf("Item '%s' parsed, found child items %d", logId, len(parsable.GetChildren())))
 						}
 
+						// @idiomatic: check context before long-running operations
 						if ctx.Err() != nil {
 							return
 						}
 
-						// Решил эту проблему разделив канал на 2 канала.
-						// (Мы напихали children в буфер Queue.outCh и теперь застрянем на проталкивании очередного элемента туда)
-						// (Место в буфере Queue.outCh не освобождается, потому что, никто не читает далее этого ParseStage.)
+						// Суть проблемы:
+						// queue -> download -> parse -> save -> done
+						//  +        +           + заполняем буфер queue и блокируемся на добавлении элемента, поэтому и parse.outCh ничего не возвращает
 						for _, child := range parsable.GetChildren() {
 							queue.Push(ctx, child)
 						}
@@ -287,7 +274,7 @@ func saveStage(ctx context.Context, inCh <-chan internal.Queueable, workersCnt i
 					}, retry.NewConfig(retry.WithMaxAttempts(config.RetryAttempts), retry.WithDelay(config.RetryDelay)))
 
 					if err != nil {
-						logger.Debug(fmt.Sprintf("Item '%s' saving skipped, after %d attempts, with error %v.", logId, config.RetryAttempts, err))
+						logger.Debug(fmt.Sprintf("Item '%s' saving skipped, after %d attempts, with error: %v.", logId, config.RetryAttempts, err))
 						item.SetSkipped("save")
 					} else {
 						logger.Debug(fmt.Sprintf("Item '%s' saved to '%s'.", logId, path))
@@ -312,18 +299,31 @@ func saveStage(ctx context.Context, inCh <-chan internal.Queueable, workersCnt i
 	return outCh
 }
 
-func downloadItem(ctx context.Context, item internal.Downloadable, httpClientPool *sync.Pool) error {
-	httpClient := httpClientPool.Get().(*httpclient.Client)
-	defer httpClientPool.Put(httpClient)
+func downloadItem(ctx context.Context, item internal.Downloadable, config *internal.Config, httpClientPool *sync.Pool) error {
+	client := httpClientPool.Get().(*httpclient.Client)
+	defer httpClientPool.Put(client)
 
-	// buffered?
-	// check max size limit and extension
-	content, err := httpClient.Get(ctx, item.GetURL())
+	// 1) Try a HEAD request before GET. However, some servers return Content-Length: 0
+	//    or the URL provides a stream-like response.
+	// 2) If HEAD is not supported or doesn't provide a valid size, read the GET response
+	// 	  and stop when the size limit is exceeded.
+	head, err := client.Head(ctx, item.GetURL())
 	if err != nil {
 		return err
 	}
 
-	// todo: check file size before downloading if can
+	contentLenHeader := head.Header.Get("Content-Length")
+	if contentLenHeader != "" {
+		size, err := strconv.ParseInt(head.Header.Get("Content-Length"), 10, 64)
+		if err == nil && size > config.MaxFileSize {
+			return fmt.Errorf("content size exceeds limit: %d", config.MaxFileSize)
+		}
+	}
+
+	content, err := client.Get(ctx, item.GetURL())
+	if err != nil {
+		return err
+	}
 
 	err = item.SetContent(content)
 	if err != nil {
