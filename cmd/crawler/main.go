@@ -23,9 +23,11 @@ func main() {
 		os.Exit(1)
 	}
 
+	//config.MaxCount = 5
+
 	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{
-		//Level: config.SlogValue(),
-		Level: slog.LevelDebug,
+		Level: config.SlogValue(),
+		//Level: slog.LevelDebug,
 	}))
 
 	// @idiomatic: graceful shutdown (modern way)
@@ -45,9 +47,9 @@ func main() {
 		}()
 	*/
 
-	startPage, err := internal.NewPage(config.StartURL)
+	startPage, err := internal.NewPage(config.URL)
 	if err != nil {
-		logger.Error("Failed to parse startURL", "err", err, "value", config.StartURL)
+		logger.Error("Failed to parse startURL", "err", err, "value", config.URL)
 		os.Exit(1)
 	}
 
@@ -98,7 +100,7 @@ func main() {
 	)
 
 	startedAt := time.Now()
-	queue.Push(startPage)
+	queue.Push(ctx, startPage)
 
 	var pagesCnt, assetsCnt = 0, 0
 
@@ -119,9 +121,16 @@ func main() {
 		}
 	}
 
-	logger.Info("Crawling completed",
+	msg := "Crawling completed"
+	if ctx.Err() != nil {
+		msg = "Crawling interrupted"
+	}
+
+	logger.Info(
+		msg,
 		"elapsed", time.Since(startedAt).String(),
-		"pages_crawled", pagesCnt, "assets_crawled", assetsCnt,
+		"pages_crawled", pagesCnt,
+		"assets_crawled", assetsCnt,
 	)
 }
 
@@ -214,14 +223,15 @@ func parseStage(ctx context.Context, inCh <-chan internal.Queueable, workersCnt 
 							logger.Debug(fmt.Sprintf("Item '%s' parsed, found child items %d", logId, len(parsable.GetChildren())))
 						}
 
-						// Мы напихали children в буфер Queue.outCh и теперь застрянем на проталкивании очередного элемента туда
-						// Место в буфере Queue.outCh не освобождается, потому что, никто не читает далее этого ParseStage.
-						//
-						// Запись assets внутри goroutine вроде бы должно помочь, но это плохо работает с закрытием
-						// канала в Ack, мы можем закрыть его до того как все записано.
-						// Другой минус - неконтролируемый рост числа goroutines.
+						if ctx.Err() != nil {
+							return
+						}
+
+						// Решил эту проблему разделив канал на 2 канала.
+						// (Мы напихали children в буфер Queue.outCh и теперь застрянем на проталкивании очередного элемента туда)
+						// (Место в буфере Queue.outCh не освобождается, потому что, никто не читает далее этого ParseStage.)
 						for _, child := range parsable.GetChildren() {
-							queue.Push(child)
+							queue.Push(ctx, child)
 						}
 					}
 
@@ -331,7 +341,10 @@ func saveItem(ctx context.Context, baseDir string, item internal.Savable) (strin
 	}
 
 	if transformable, ok := item.(internal.Transformable); ok {
-		transformable.Transform()
+		err := transformable.Transform()
+		if err != nil {
+			return "", fmt.Errorf("transform file: %w", err)
+		}
 	}
 
 	if err := os.WriteFile(savePath, item.GetContent(), 0644); err != nil {

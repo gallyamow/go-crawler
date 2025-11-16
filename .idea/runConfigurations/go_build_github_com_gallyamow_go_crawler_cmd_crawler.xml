@@ -2,7 +2,7 @@
   <configuration default="false" name="go build github.com/gallyamow/go-crawler/cmd/crawler" type="GoApplicationRunConfiguration" factoryName="Go Application" nameIsGenerated="true">
     <module name="go-crawler" />
     <working_directory value="$PROJECT_DIR$" />
-    <parameters value="--start-url=&quot;https://go.dev/learn&quot;" />
+    <parameters value="--url=&quot;https://go.dev/learn&quot;" />
     <kind value="DIRECTORY" />
     <package value="./cmd/crawler" />
     <directory value="$PROJECT_DIR$/cmd/crawler" />

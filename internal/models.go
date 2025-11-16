@@ -1,6 +1,7 @@
 package internal
 
 import (
+	"bytes"
 	"crypto/md5"
 	"encoding/hex"
 	"fmt"
@@ -18,7 +19,7 @@ type Queueable interface {
 }
 
 type Transformable interface {
-	Transform()
+	Transform() error
 }
 
 type Savable interface {
@@ -79,7 +80,7 @@ func (p *Page) SetContent(content []byte) error {
 }
 
 // Transform переписывает src ресурсов relative относительно директории страницы значением.
-func (p *Page) Transform() {
+func (p *Page) Transform() error {
 	pagePath := p.ResolveRelativeSavePath()
 
 	for _, asset := range p.Assets {
@@ -91,6 +92,16 @@ func (p *Page) Transform() {
 		newURL := makeRelativeURL(pagePath, resolveLocalSavePath(link.URL, "", "html"))
 		htmlparser.WriteResourceURL(link.HTMLNode, newURL)
 	}
+
+	// replace content
+	var buf bytes.Buffer
+	err := html.Render(&buf, p.HTMLNode)
+	if err != nil {
+		return fmt.Errorf("failed to render page content: %v", err)
+	}
+
+	p.Content = buf.Bytes()
+	return nil
 }
 
 func (p *Page) Parse() error {

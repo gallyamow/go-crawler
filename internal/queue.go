@@ -1,6 +1,7 @@
 package internal
 
 import (
+	"context"
 	"log/slog"
 	"sync"
 )
@@ -37,7 +38,7 @@ func (q *Queue) Assets() <-chan Queueable {
 	return q.assetsCh
 }
 
-func (q *Queue) Push(item Queueable) bool {
+func (q *Queue) Push(ctx context.Context, item Queueable) bool {
 	// @idiomatic: deadlock due to holding a mutex while performing a potentially blocking operation
 	// (избавился от этой проблемы: использование здесь mutex приводит к тому что он остается захваченным до отправки в pagesCh или assetsCh)
 
@@ -45,22 +46,32 @@ func (q *Queue) Push(item Queueable) bool {
 		return false
 	}
 
+	if ctx.Err() != nil {
+		return false
+	}
+
 	// @idiomatic: compile time type checking
 	// var _ Downloadable = (*CssFile)(nil)
 
-	switch item.(type) {
-	case *Page:
+	if page, ok := item.(*Page); ok {
+		q.mu.Lock()
 		// checking total limits
 		if q.totalQueuedPages >= q.pagesLimit {
+			q.mu.Unlock()
 			return false
 		}
-
-		q.mu.Lock()
 		q.totalQueuedPages++
 		q.mu.Unlock()
 
-		q.pagesCh <- item
-	default:
+		select {
+		case <-ctx.Done():
+			return false
+		case q.pagesCh <- page:
+			q.mu.Lock()
+			q.totalQueuedPages++
+			q.mu.Unlock()
+		}
+	} else {
 		// assets
 		q.assetsCh <- item
 	}

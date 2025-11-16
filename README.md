@@ -17,13 +17,13 @@ A minimalistic, concurrent web crawler written in Go.
 go run cmd/crawler/main.go \
   --max-count 200 \
   --max-concurrent 20 \
-  --start-url "https://go.dev/learn/" \
+  --url "https://go.dev/learn/" \
   --timeout 60s \
   --output-dir "./tmp"
 ```
 
 ```shell
-./crawler --max-count 200 --max-concurrent 20 --start-url "https://go.dev/learn/" --output-dir "./.tmp"
+./crawler --max-count 200 --max-concurrent 20 --url "https://go.dev/learn/" --output-dir "./.tmp"
 ```
 
 ## Options
@@ -32,7 +32,7 @@ go run cmd/crawler/main.go \
 |--------------------|--------------------------|---------|----------------------------|
 | `--max-count`      | `CRAWLER_MAX_COUNT`      | 100     | Maximum pages to crawl     |
 | `--max-concurrent` | `CRAWLER_MAX_CONCURRENT` | 10      | Maximum concurrent workers |
-| `--start-url`      | `CRAWLER_START_URL`      | ""      | Starting URL               |
+| `--url`            | `CRAWLER_URL`            | ""      | Starting URL               |
 | `--timeout`        | `CRAWLER_TIMEOUT`        | 30s     | HTTP request timeout       |
 | `--retry-attempts` | `CRAWLER_RETRY_ATTEMPTS` | 3       | Number of retry attempts   |
 | `--retry-delay`    | `CRAWLER_RETRY_DELAY`    | 1s      | Delay between retries      |

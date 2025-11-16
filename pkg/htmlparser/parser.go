@@ -69,7 +69,7 @@ func WriteResourceURL(node *html.Node, newURL string) bool {
 
 	switch tag {
 	case "script", "img":
-		return setHTMLNodeAttrValue(node, "newSrc", newURL)
+		return setHTMLNodeAttrValue(node, "src", newURL)
 	case "link":
 		return setHTMLNodeAttrValue(node, "href", newURL)
 	case "a":
