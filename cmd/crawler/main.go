@@ -28,6 +28,8 @@ func main() {
 		//Level: slog.LevelDebug,
 	}))
 
+	//debug.EnableDumpGoroutines(5 * time.Second)
+
 	// @idiomatic: graceful shutdown (modern way)
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
@@ -216,7 +218,7 @@ func parseStage(ctx context.Context, inCh <-chan internal.Queueable, workersCnt 
 						err := parsable.Parse()
 						if err != nil {
 							logger.Debug(fmt.Sprintf("Item '%s' parsing skipped, with error %v.", logId, err))
-							item.SetSkipped("save")
+							item.SetSkipped("parse")
 						} else {
 							logger.Debug(fmt.Sprintf("Item '%s' parsed, found child items %d", logId, len(parsable.GetChildren())))
 						}
