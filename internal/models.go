@@ -80,7 +80,12 @@ func (p *Page) SetContent(content []byte) error {
 }
 
 // Transform переписывает src ресурсов relative относительно директории страницы значением.
-func (p *Page) Transform() error {
+func (p *Page) Transform() (err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("panic in Transform: %v", r)
+		}
+	}()
 	pagePath := p.ResolveRelativeSavePath()
 
 	for _, asset := range p.Assets {
@@ -95,7 +100,7 @@ func (p *Page) Transform() error {
 
 	// replace content
 	var buf bytes.Buffer
-	err := html.Render(&buf, p.HTMLNode)
+	err = html.Render(&buf, p.HTMLNode)
 	if err != nil {
 		return fmt.Errorf("failed to render page content: %v", err)
 	}
