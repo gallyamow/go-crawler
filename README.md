@@ -23,7 +23,7 @@ go run cmd/crawler/main.go \
 ```
 
 ```shell
-./crawler --max-count=1000 --url "https://go.dev/learn/" --output-dir "./.tmp"
+./crawler --max-count=1000 --url "https://pikabu.ru/" --output-dir "./.tmp"
 ```
 
 ## Options
